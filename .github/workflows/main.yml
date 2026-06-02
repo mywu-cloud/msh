@@ -1,0 +1,42 @@
+name: TDCC Stock Data Weekly Scraper
+
+on:
+  schedule:
+      # Every Saturday at 16:00 Taiwan time (UTC+8) = 08:00 UTC
+          - cron: '0 8 * * 6'
+            workflow_dispatch:  # Allow manual trigger
+
+            jobs:
+              scrape-and-update:
+                  runs-on: ubuntu-latest
+                      timeout-minutes: 30
+
+                          steps:
+                                - name: Checkout repository
+                                        uses: actions/checkout@v4
+
+                                              - name: Set up Python 3.11
+                                                      uses: actions/setup-python@v5
+                                                              with:
+                                                                        python-version: '3.11'
+                                                                                  cache: 'pip'
+
+                                                                                        - name: Install dependencies
+                                                                                                run: |
+                                                                                                          pip install -r scraper/requirements.txt
+                                                                                                          
+                                                                                                                - name: Run TDCC scraper
+                                                                                                                        env:
+                                                                                                                                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                                                                                                                                            CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                                                                                                                                                      CLOUDFLARE_D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
+                                                                                                                                                              run: |
+                                                                                                                                                                        python scraper/main.py
+                                                                                                                                                                        
+                                                                                                                                                                              - name: Commit updated JSON data
+                                                                                                                                                                                      run: |
+                                                                                                                                                                                                git config --local user.email "action@github.com"
+                                                                                                                                                                                                          git config --local user.name "GitHub Action"
+                                                                                                                                                                                                                    git add data/ || true
+                                                                                                                                                                                                                              git diff --staged --quiet || git commit -m "Auto update: TDCC stock data $(date +'%Y-%m-%d')"
+                                                                                                                                                                                                                                        git push || true
