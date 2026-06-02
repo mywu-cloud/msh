@@ -1,0 +1,21 @@
+name = "msh-api"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Cloudflare D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "msh-stock-db"
+database_id = "YOUR_D1_DATABASE_ID"
+
+# KV namespace for caching
+[[kv_namespaces]]
+binding = "CACHE"
+id = "YOUR_KV_NAMESPACE_ID"
+
+[vars]
+ENVIRONMENT = "production"
+
+[build]
+command = "npm run build"
