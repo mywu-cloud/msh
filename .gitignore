@@ -1,0 +1,32 @@
+# Node
+node_modules/
+.next/
+out/
+dist/
+.wrangler/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+
+# Data (only commit JSON output, not raw downloads)
+data/*.zip
+data/*.csv
+data/*.xlsx
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Secrets
+.env.local
+.env.production
