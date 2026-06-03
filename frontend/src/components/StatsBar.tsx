@@ -1,101 +1,29 @@
 'use client'
-
-  import useSWR from 'swr'
-    import { Database, CalendarDays, AlertTriangle, TrendingUp } from 'lucide-react'
-
-    const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.workers.dev'
+import useSWR from 'swr'
+import { Database, TrendingUp, Users, Clock } from 'lucide-react'
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.workers.dev'
 const fetcher = (url: string) => fetch(url).then(r => r.json())
-
-  interface Stats {
-    total_stocks: number
-        total_weeks: number
-        latest_date: string
-        earliest_date: string
-        alert_count: number
-      }
-
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  sub,
-  accent,
-}: {
-  icon: React.ElementType
-      label: string
-      value: string | number
-      sub?: string
-      accent?: string
-    }) {
+export function StatsBar() {
+  const { data } = useSWR(`${API_BASE}/api/stats`, fetcher, { refreshInterval: 3600000 })
+  const stats = [
+    { icon: Database, label: '追蹤股票', value: data?.total_stocks ? `${data.total_stocks.toLocaleString()} 殔` : '—' },
+    { icon: TrendingUp, label: '本期分析', value: data?.analyzed_stocks ? `${data.analyzed_stocks} 殔` : '—' },
+    { icon: Users, label: '持股分布筆數', value: data?.total_records ? `${(data.total_records/10000).toFixed(1)} 萬` : '—' },
+    { icon: Clock, label: '最後更新', value: data?.last_updated || '每週六 16:00' },
+  ]
   return (
-        <div className="card p-4 flex items-center gap-3">
-          <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${accent || 'bg-primary-50'}`}>
-        <Icon size={16} className={accent ? 'text-white' : 'text-primary-600'} />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs text-slate-400 mb-0.5">{label}</div>
-                  <div className="font-bold text-base text-slate-800 leading-none">{value}</div>
-          {sub && <div className="text-xs text-slate-400 mt-0.5">{sub}</div>}
-                </div>
-              </div>
-            )
-          }
-
-          export function StatsBar() {
-            const { data, isLoading } = useSWR<{ data: Stats }>(
-                  `${API_BASE}/api/stats`,
-                  fetcher,
-              { refreshInterval: 600_000 }
-  )
-
-  const stats = data?.data
-
-  if (isLoading || !stats) {
-    return (
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-{Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="card p-4 h-[72px]">
-            <div className="skeleton h-3 w-20 mb-2 rounded" />
-            <div className="skeleton h-5 w-16 rounded" />
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      {stats.map(({ icon: Icon, label, value }) => (
+        <div key={label} className="card flex items-center gap-3 py-3 px-4">
+          <div className="w-8 h-8 rounded-lg bg-primary-50 flex items-center justify-center flex-shrink-0">
+            <Icon className="w-4 h-4 text-primary-600" />
           </div>
-        ))}
-      </div>
-    )
-}
-
-  const latestDate = stats.latest_date
-    ? new Date(stats.latest_date).toLocaleDateString('zh-TW', {
-        year: 'numeric', month: '2-digit', day: '2-digit'
-})
-    : '—'
-
-  return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      <StatCard
-        icon={Database}
-        label="追蹤股票數"
-        value={stats.total_stocks?.toLocaleString() || '—'}
-        sub="上市 + 上櫃"
-      />
-      <StatCard
-        icon={CalendarDays}
-        label="最新更新"
-        value={latestDate}
-        sub={`累計 ${stats.total_weeks} 週`}
-      />
-      <StatCard
-        icon={TrendingUp}
-        label="籌碼集中個股"
-        value={`${Math.floor((stats.total_stocks || 0) * 0.15)}`}
-        sub="大股東連續增持"
-      />
-      <StatCard
-        icon={AlertTriangle}
-        label="暴增警示"
-        value={stats.alert_count || 0}
-        sub="本週大股東驟增"
-        accent="bg-amber-500"
-      />
+          <div className="min-w-0">
+            <p className="text-xs text-slate-500 truncate">{label}</p>
+            <p className="text-sm font-semibold text-slate-800 truncate">{value}</p>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
