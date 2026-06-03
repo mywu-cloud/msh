@@ -10,3 +10,5 @@ const nextConfig: NextConfig = {
 }
 
 export default nextConfig
+
+// Build config: Next.js static export, root: frontend, output: out
