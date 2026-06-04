@@ -10,7 +10,7 @@
 
        const CORS_HEADERS = {
          "Access-Control-Allow-Origin": "*",
-           "Access-Control-Allow-Methods": "GET, OPTIONS",
+           "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
              "Access-Control-Allow-Headers": "Content-Type",
                "Content-Type": "application/json; charset=utf-8",
                };
@@ -290,7 +290,137 @@
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             // ─── Main Router ────────────────────────────────────────────────────────────
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            export default {
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
+/**
+ * POST /api/upload-csv
+ * 手動上傳 TDCC 股權分散表 CSV 並匯入 D1
+ * 接受 multipart/form-data，欄位 "file" (CSV) + 可選 "date" (YYYYMMDD)
+ */
+async function handleUploadCsv(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  try {
+    // 只允許 POST
+    if (request.method !== "POST") {
+      return jsonResponse({ error: "Method Not Allowed" }, 405);
+    }
+
+    const contentType = request.headers.get("content-type") || "";
+    if (!contentType.includes("multipart/form-data") && !contentType.includes("text/csv") && !contentType.includes("application/octet-stream")) {
+      return jsonResponse({ error: "請以 multipart/form-data 上傳 CSV 檔案，欄位名稱為 'file'" }, 400);
+    }
+
+    let csvText = "";
+    let dateStr = "";
+
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await request.formData();
+      const file = formData.get("file");
+      if (!file || typeof file === "string") {
+        return jsonResponse({ error: "找不到 'file' 欄位，請上傳 CSV 檔案" }, 400);
+      }
+      csvText = await (file as File).text();
+      dateStr = (formData.get("date") as string) || "";
+    } else {
+      csvText = await request.text();
+      const url = new URL(request.url);
+      dateStr = url.searchParams.get("date") || "";
+    }
+
+    if (!csvText.trim()) {
+      return jsonResponse({ error: "CSV 內容為空" }, 400);
+    }
+
+    // 解析 CSV 行
+    const lines = csvText.trim().split("\n");
+    const rows = lines.map(l => l.split(",").map(c => c.trim().replace(/^"|"$/g, "")));
+
+    // 偵測 header 行 (若第一行第一欄不是日期格式)
+    let dataRows = rows;
+    const firstCell = rows[0]?.[0] || "";
+    const isHeader = !/^\d{8}$/.test(firstCell) && !/^\d{4}$/.test(firstCell);
+    if (isHeader) dataRows = rows.slice(1);
+
+    // 確定欄位 index (opendata 格式: date, stock_code, bracket, holders, shares, ratio)
+    // 若有 header 則根據欄名對應
+    let dateCol = 0, stockCol = 1, bracketCol = 2, holdersCol = 3, sharesCol = 4, ratioCol = 5;
+
+    if (isHeader) {
+      const header = rows[0].map(h => h.toLowerCase());
+      const findCol = (names: string[]) => names.reduce((found, n) => found >= 0 ? found : header.findIndex(h => h.includes(n)), -1);
+      const d = findCol(["date", "日期", "scadate"]);
+      const s = findCol(["stock_code", "證券代號", "code"]);
+      const b = findCol(["bracket", "持股分級", "持股"]);
+      const h = findCol(["holders", "人數"]);
+      const sh = findCol(["shares", "股數"]);
+      const r = findCol(["ratio", "比例", "佔"]);
+      if (d >= 0) dateCol = d;
+      if (s >= 0) stockCol = s;
+      if (b >= 0) bracketCol = b;
+      if (h >= 0) holdersCol = h;
+      if (sh >= 0) sharesCol = sh;
+      if (r >= 0) ratioCol = r;
+    }
+
+    // 若未提供 date 參數，從資料中取得
+    if (!dateStr && dataRows.length > 0) {
+      const firstDate = dataRows[0][dateCol];
+      if (/^\d{8}$/.test(firstDate)) dateStr = firstDate;
+    }
+    if (!dateStr) {
+      const today = new Date();
+      dateStr = today.toISOString().slice(0,10).replace(/-/g,"");
+    }
+
+    // 批次寫入 D1 (每次 5 筆)
+    let inserted = 0;
+    let errors = 0;
+    const batchSize = 5;
+
+    for (let i = 0; i < dataRows.length; i += batchSize) {
+      const batch = dataRows.slice(i, i + batchSize).filter(r => r.length > Math.max(stockCol, holdersCol, sharesCol));
+      if (batch.length === 0) continue;
+
+      const placeholders = batch.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
+      const sql = `INSERT INTO distributions (stock_code, date, bracket, holders, shares, ratio)
+        VALUES ${placeholders}
+        ON CONFLICT(stock_code, date, bracket) DO UPDATE SET
+        holders=excluded.holders, shares=excluded.shares, ratio=excluded.ratio`;
+
+      const params: (string | number)[] = [];
+      for (const row of batch) {
+        const code = (row[stockCol] || "").padStart(4, "0").substring(0, 6);
+        const date = /^\d{8}$/.test(row[dateCol]) ? row[dateCol] : dateStr;
+        const bracket = row[bracketCol] || "";
+        const holders = parseInt((row[holdersCol] || "0").replace(/,/g, "")) || 0;
+        const shares = parseInt((row[sharesCol] || "0").replace(/,/g, "")) || 0;
+        const ratio = parseFloat((row[ratioCol] || "0").replace(/,/g, "")) || 0;
+        params.push(code, date, bracket, holders, shares, ratio);
+      }
+
+      const result = await env.DB.prepare(sql).bind(...params).run();
+      if (result.success) {
+        inserted += batch.length;
+      } else {
+        errors += batch.length;
+      }
+    }
+
+    return jsonResponse({
+      success: true,
+      message: `成功匯入 ${inserted} 筆，失敗 ${errors} 筆`,
+      date: dateStr,
+      total_rows: dataRows.length,
+      inserted,
+      errors,
+    });
+  } catch (e) {
+    return jsonResponse({ error: "匯入失敗: " + String(e) }, 500);
+  }
+}
+
+export default {
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               async fetch(request: Request, env: Env): Promise<Response> {
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   // CORS preflight
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       if (request.method === "OPTIONS") {
@@ -316,6 +446,11 @@
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           if (path === "/api/stats" || path === "/api/stats/") {
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 return handleStats(env);
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     }
+        // CSV 手動上傳
+        if (path === "/api/upload-csv" || path === "/api/upload-csv/") {
+          return handleUploadCsv(request, env);
+        }
+
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         // Distribution: /api/distribution/2303
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             const distMatch = path.match(/^\/api\/distribution\/([A-Z0-9]+)$/i);
