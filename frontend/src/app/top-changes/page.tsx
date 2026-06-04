@@ -9,7 +9,7 @@ import { MarketTabs } from '@/components/MarketTabs'
 import { SearchBar } from '@/components/SearchBar'
 import clsx from 'clsx'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.workers.dev'
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.tw-mywu.workers.dev'
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
 type ChangeType = 'increase' | 'decrease'
