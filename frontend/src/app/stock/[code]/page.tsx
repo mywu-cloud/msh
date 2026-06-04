@@ -1,6 +1,6 @@
 import { StockDetailClient } from './StockDetailClient'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.workers.dev'
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.tw-mywu.workers.dev'
 
 export async function generateStaticParams() {
   try {
