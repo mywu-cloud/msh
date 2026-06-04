@@ -473,17 +473,16 @@ class CloudflareD1Writer:
                 log.warning(f"init_schema SQL failed: {result}")
 
     def upsert_distributions(self, records: list[dict]):
-        """批量寫入持股分布數據（使用多行 INSERT 加速）。"""
+        """批量寫入持股分布數據。"""
         if not records:
             return
 
-        # D1 REST API 不支援 /batch，改用多行 INSERT 減少請求數
-        batch_size = 50  # 每次 INSERT 50 筆
+        # 每次多行 INSERT，避免超過 D1 SQL 變數限制
+        batch_size = 5  # 每批 5 筆，30 個 SQL 參數
         total = 0
 
         for i in range(0, len(records), batch_size):
             batch = records[i:i + batch_size]
-            # 建立多行 VALUES 子句
             placeholders = ', '.join(['(?, ?, ?, ?, ?, ?)'] * len(batch))
             sql = f"""
                 INSERT INTO distributions (stock_code, date, bracket, holders, shares, ratio)
@@ -491,23 +490,22 @@ class CloudflareD1Writer:
                 ON CONFLICT(stock_code, date, bracket) DO UPDATE SET
                 holders=excluded.holders, shares=excluded.shares, ratio=excluded.ratio
             """
-            # 展開所有參數
             params = []
             for r in batch:
                 params.extend([
                     r["stock_code"],
                     r["date"],
                     r["bracket"],
-                    r["holders"],
-                    r["shares"],
-                    r["ratio"],
+                    int(r.get("holders", 0) or 0),
+                    int(r.get("shares", 0) or 0),
+                    float(r.get("ratio", 0.0) or 0.0),
                 ])
             result = self.execute_sql(sql, params)
             if not result.get("success"):
                 log.warning(f"batch upsert 失敗: {result}")
             total += len(batch)
 
-        log.info(f"upsert_distributions: {total} 筆完成（批次寫入）")
+        log.info(f"upsert_distributions: {total} 筆完成")
     def upsert_skill_analysis(self, analysis_date: str, candidates: list[dict]):
         """寫入 Skill 分析結果。"""
         sql = """
