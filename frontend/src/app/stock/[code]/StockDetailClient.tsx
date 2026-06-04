@@ -8,7 +8,7 @@ import { HolderHeatmap } from '@/components/HolderHeatmap'
 import { ChangeTag } from '@/components/ChangeTag'
 import { ScoreBar } from '@/components/ScoreBar'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.workers.dev'
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.tw-mywu.workers.dev'
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
 interface DistributionResponse {
