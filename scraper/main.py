@@ -144,7 +144,7 @@ class TDCCScraper:
             log.error(f"download_csv_zip({date_str}) error: {e}")
             return None
 
-        def _parse_zip(self, content: bytes) -> pd.DataFrame | None:
+    def _parse_zip(self, content: bytes) -> pd.DataFrame | None:
         """解壓 ZIP 並解析內含的 CSV。"""
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as z:
