@@ -473,40 +473,37 @@ class CloudflareD1Writer:
                 log.warning(f"init_schema SQL failed: {result}")
 
     def upsert_distributions(self, records: list[dict]):
-        """批量寫入持股分布數據（使用 D1 batch API 加速）。"""
+        """批量寫入持股分布數據（使用多行 INSERT 加速）。"""
         if not records:
             return
 
-        sql = """
-            INSERT INTO distributions (stock_code, date, bracket, holders, shares, ratio)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(stock_code, date, bracket) DO UPDATE SET
-            holders=excluded.holders, shares=excluded.shares, ratio=excluded.ratio
-        """
-
-        # 使用 D1 batch API，每次批次最多 100 筆
-        batch_size = 100
-        url = f"{self.BASE}/batch"
+        # D1 REST API 不支援 /batch，改用多行 INSERT 減少請求數
+        batch_size = 50  # 每次 INSERT 50 筆
         total = 0
 
         for i in range(0, len(records), batch_size):
             batch = records[i:i + batch_size]
-            statements = []
+            # 建立多行 VALUES 子句
+            placeholders = ', '.join(['(?, ?, ?, ?, ?, ?)'] * len(batch))
+            sql = f"""
+                INSERT INTO distributions (stock_code, date, bracket, holders, shares, ratio)
+                VALUES {placeholders}
+                ON CONFLICT(stock_code, date, bracket) DO UPDATE SET
+                holders=excluded.holders, shares=excluded.shares, ratio=excluded.ratio
+            """
+            # 展開所有參數
+            params = []
             for r in batch:
-                statements.append({
-                    "sql": sql,
-                    "params": [
-                        r["stock_code"],
-                        r["date"],
-                        r["bracket"],
-                        r["holders"],
-                        r["shares"],
-                        r["ratio"],
-                    ]
-                })
-            resp = requests.post(url, headers=self.headers, json=statements, timeout=60)
-            result = resp.json()
-            if isinstance(result, dict) and not result.get("success"):
+                params.extend([
+                    r["stock_code"],
+                    r["date"],
+                    r["bracket"],
+                    r["holders"],
+                    r["shares"],
+                    r["ratio"],
+                ])
+            result = self.execute_sql(sql, params)
+            if not result.get("success"):
                 log.warning(f"batch upsert 失敗: {result}")
             total += len(batch)
 
