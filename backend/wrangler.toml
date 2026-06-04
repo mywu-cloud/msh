@@ -9,11 +9,6 @@ binding = "DB"
 database_name = "msh-stock-db"
 database_id = "cfa7a620-887c-496b-b61e-410d3f4a33c4"
 
-# KV namespace for caching
-[[kv_namespaces]]
-binding = "CACHE"
-id = "YOUR_KV_NAMESPACE_ID"
-
 [vars]
 ENVIRONMENT = "production"
 
