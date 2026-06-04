@@ -109,7 +109,7 @@ class TDCCScraper:
     def download_csv_zip(self, date_str: str) -> pd.DataFrame | None:
         """
         下載指定日期的股權分散表 CSV，解析為 DataFrame。
-        使用 TDCC 開放資料 API。
+        使用 TDCC 開放資料 API (opendata.tdcc.com.tw)。
         """
         try:
             # TDCC 開放資料 API - 下載最新全部股票股權分散表
@@ -121,21 +121,20 @@ class TDCCScraper:
             if len(resp.content) > 2 and resp.content[:2] == b'PK':
                 return self._parse_zip(resp.content)
 
-            # 嘗試解析為 CSV (Big5 編碼)
-            try:
-                df = pd.read_csv(io.BytesIO(resp.content), encoding="big5", header=1)
-                log.info(f"成功解析 CSV (big5): {len(df)} 行")
-                return df
-            except Exception:
-                pass
-
-            # 嘗試解析為 CSV (UTF-8 編碼)
-            try:
-                df = pd.read_csv(io.BytesIO(resp.content), encoding="utf-8", header=1)
-                log.info(f"成功解析 CSV (utf-8): {len(df)} 行")
-                return df
-            except Exception:
-                pass
+            # opendata CSV 無 header，以 header=None 讀取，欄位為整數索引
+            for enc in ["utf-8", "big5"]:
+                try:
+                    df = pd.read_csv(io.BytesIO(resp.content), encoding=enc, header=None)
+                    if len(df) < 100:
+                        continue
+                    # opendata 格式: 日期, 證券代號, 持股分級, 人數, 股數, 比例
+                    if df.shape[1] >= 6:
+                        df.columns = ['date', 'stock_code', 'bracket', 'holders', 'shares', 'ratio'] + \
+                                     [f'extra_{i}' for i in range(df.shape[1] - 6)]
+                    log.info(f"成功解析 CSV ({enc}): {len(df)} 行")
+                    return df
+                except Exception:
+                    continue
 
             log.warning(f"日期 {date_str}: 無法解析回應內容")
             return None
@@ -143,7 +142,6 @@ class TDCCScraper:
         except Exception as e:
             log.error(f"download_csv_zip({date_str}) error: {e}")
             return None
-
     def _parse_zip(self, content: bytes) -> pd.DataFrame | None:
         """解壓 ZIP 並解析內含的 CSV。"""
         try:
