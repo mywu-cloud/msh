@@ -565,7 +565,7 @@ def main():
         dates = [(last_friday - timedelta(weeks=i)).strftime("%Y%m%d") for i in range(4)]
         log.info(f"使用預設日期: {dates}")
 
-    target_dates = dates[:4]  # 最近4週
+    target_dates = dates[:1]  # 最近4週
     log.info(f"目標日期: {target_dates}")
 
     # 2. 下載並解析各週數據
