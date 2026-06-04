@@ -473,26 +473,44 @@ class CloudflareD1Writer:
                 log.warning(f"init_schema SQL failed: {result}")
 
     def upsert_distributions(self, records: list[dict]):
-        """批量寫入持股分布數據。"""
+        """批量寫入持股分布數據（使用 D1 batch API 加速）。"""
+        if not records:
+            return
+
         sql = """
             INSERT INTO distributions (stock_code, date, bracket, holders, shares, ratio)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(stock_code, date, bracket) DO UPDATE SET
-                holders=excluded.holders, shares=excluded.shares, ratio=excluded.ratio
+            holders=excluded.holders, shares=excluded.shares, ratio=excluded.ratio
         """
-        for r in records:
-            params = [
-                r["stock_code"],
-                r["date"],
-                r["bracket"],
-                r["holders"],
-                r["shares"],
-                r["ratio"],
-            ]
-            result = self.execute_sql(sql, params)
-            if not result.get("success"):
-                log.info(f"upsert_distributions: {len(records)} 筆完成")
 
+        # 使用 D1 batch API，每次批次最多 100 筆
+        batch_size = 100
+        url = f"{self.BASE}/batch"
+        total = 0
+
+        for i in range(0, len(records), batch_size):
+            batch = records[i:i + batch_size]
+            statements = []
+            for r in batch:
+                statements.append({
+                    "sql": sql,
+                    "params": [
+                        r["stock_code"],
+                        r["date"],
+                        r["bracket"],
+                        r["holders"],
+                        r["shares"],
+                        r["ratio"],
+                    ]
+                })
+            resp = requests.post(url, headers=self.headers, json=statements, timeout=60)
+            result = resp.json()
+            if isinstance(result, dict) and not result.get("success"):
+                log.warning(f"batch upsert 失敗: {result}")
+            total += len(batch)
+
+        log.info(f"upsert_distributions: {total} 筆完成（批次寫入）")
     def upsert_skill_analysis(self, analysis_date: str, candidates: list[dict]):
         """寫入 Skill 分析結果。"""
         sql = """
