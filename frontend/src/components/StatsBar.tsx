@@ -1,7 +1,7 @@
 'use client'
 import useSWR from 'swr'
 import { Database, TrendingUp, Users, Clock } from 'lucide-react'
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.workers.dev'
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.tw-mywu.workers.dev'
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 export function StatsBar() {
   const { data } = useSWR(`${API_BASE}/api/stats`, fetcher, { refreshInterval: 3600000 })
