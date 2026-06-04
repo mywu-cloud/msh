@@ -108,45 +108,43 @@ class TDCCScraper:
 
     def download_csv_zip(self, date_str: str) -> pd.DataFrame | None:
         """
-        下載指定日期的股權分散表 ZIP，解壓後解析 CSV。
-        date_str 格式: YYYYMMDD (民國年) 或 YYYY-MM-DD
+        下載指定日期的股權分散表 CSV，解析為 DataFrame。
+        使用 TDCC 開放資料 API。
         """
         try:
-            payload = {
-                "actionType": "ajax",
-                "method": "qryByDate",
-                "scaDate": date_str,
-                "StockNo": "",
-                "StockName": "",
-            }
-            resp = self.session.post(TDCC_DOWNLOAD_URL, data=payload, timeout=60)
+            # TDCC 開放資料 API - 下載最新全部股票股權分散表
+            opendata_url = "https://opendata.tdcc.com.tw/getOD.ashx?id=1-5"
+            resp = self.session.get(opendata_url, timeout=120, allow_redirects=True)
             resp.raise_for_status()
 
-            # 嘗試解析 JSON 回應中的下載連結
+            # 直接嘗試解析為 ZIP
+            if len(resp.content) > 2 and resp.content[:2] == b'PK':
+                return self._parse_zip(resp.content)
+
+            # 嘗試解析為 CSV (Big5 編碼)
             try:
-                data = resp.json()
-                download_url = data.get("url") or data.get("downloadUrl")
-                if download_url:
-                    zip_resp = self.session.get(
-                        TDCC_BASE + download_url if not download_url.startswith("http") else download_url,
-                        timeout=120
-                    )
-                    return self._parse_zip(zip_resp.content)
+                df = pd.read_csv(io.BytesIO(resp.content), encoding="big5", header=1)
+                log.info(f"成功解析 CSV (big5): {len(df)} 行")
+                return df
             except Exception:
                 pass
 
-            # 直接嘗試解析為 ZIP
-            if resp.content[:2] == b'PK':
-                return self._parse_zip(resp.content)
+            # 嘗試解析為 CSV (UTF-8 編碼)
+            try:
+                df = pd.read_csv(io.BytesIO(resp.content), encoding="utf-8", header=1)
+                log.info(f"成功解析 CSV (utf-8): {len(df)} 行")
+                return df
+            except Exception:
+                pass
 
-            log.warning(f"日期 {date_str}: 回應非 ZIP 格式")
+            log.warning(f"日期 {date_str}: 無法解析回應內容")
             return None
 
         except Exception as e:
             log.error(f"download_csv_zip({date_str}) error: {e}")
             return None
 
-    def _parse_zip(self, content: bytes) -> pd.DataFrame | None:
+        def _parse_zip(self, content: bytes) -> pd.DataFrame | None:
         """解壓 ZIP 並解析內含的 CSV。"""
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as z:
