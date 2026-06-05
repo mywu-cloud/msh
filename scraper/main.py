@@ -601,7 +601,13 @@ def main():
         dates = [(last_friday - timedelta(weeks=i)).strftime("%Y%m%d") for i in range(4)]
         log.info(f"使用預設日期: {dates}")
 
-    target_dates = dates[:1]  # 最近4週
+    # 支援環境變數指定特定日期（逗號分隔，如 "20260522,20260515"）
+    env_dates = os.environ.get("SCRAPE_DATES", "").strip()
+    if env_dates:
+        target_dates = [d.strip() for d in env_dates.split(",") if d.strip()]
+        log.info(f"使用環境變數指定日期: {target_dates}")
+    else:
+        target_dates = dates[:1]  # 預設只取最新一週
     log.info(f"目標日期: {target_dates}")
 
     # 2. 下載並解析各週數據
