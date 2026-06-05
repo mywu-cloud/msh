@@ -671,7 +671,7 @@ def main():
     if not twse_stocks.empty:
         save_json(twse_stocks.head(1000).to_dict(orient="records"), "twse_stocks.json")
     if not tpex_stocks.empty:
-        save_json(tpex_stocks.head(1000).to_dict(orient="records"), "tpex_stocks.json"
+        save_json(tpex_stocks.head(1000).to_dict(orient="records"), "tpex_stocks.json")
 
     # 5. 寫入股票清單到 D1
     if d1:
@@ -690,7 +690,7 @@ def main():
                     all_stocks.append({"stock_code": code, "stock_name": name, "market": "tpex"})
         if all_stocks:
             d1.upsert_stocks(all_stocks)
-            log.info(f"已寫入 {len(all_stocks)} 筆股票基本資料"))
+            log.info(f"已寫入 {len(all_stocks)} 筆股票基本資料")
 
     log.info("\n" + "=" * 60)
     log.info("MSH 爬蟲執行完成")
