@@ -12,8 +12,9 @@ const fetcher = (url: string) => fetch(url).then(r => r.json())
 interface Candidate {
   stock_code: string
   stock_name: string
+  market: string | null
   skill_score: number
-  big_holder_ratio_latest: number
+  big_holder_ratio: number
   latest_week_change: number
   holder_change: number
   alert: boolean
@@ -22,6 +23,16 @@ interface Candidate {
 interface Props {
   market: 'all' | 'twse' | 'tpex'
   searchQuery: string
+}
+
+function MarketBadge({ market }: { market: string | null }) {
+  if (market === 'twse') return (
+    <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">上市</span>
+  )
+  if (market === 'tpex') return (
+    <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-green-50 text-green-600">上櫃</span>
+  )
+  return null
 }
 
 export function SkillDashboard({ market, searchQuery }: Props) {
@@ -46,9 +57,9 @@ export function SkillDashboard({ market, searchQuery }: Props) {
     </div>
   )
 
-  const candidates: Candidate[] = Array.isArray(data) ? data : (data.candidates || [])
+  const candidates: Candidate[] = Array.isArray(data) ? data : (data.data || data.candidates || [])
   const filtered = candidates.filter(c =>
-    !searchQuery || c.stock_code.includes(searchQuery) || c.stock_name.includes(searchQuery)
+    !searchQuery || c.stock_code.includes(searchQuery) || (c.stock_name || '').includes(searchQuery)
   )
 
   if (filtered.length === 0) return (
@@ -66,6 +77,7 @@ export function SkillDashboard({ market, searchQuery }: Props) {
             <div className="flex items-center gap-2">
               <span className="font-mono font-semibold text-slate-800">{c.stock_code}</span>
               <span className="text-sm text-slate-600 truncate">{c.stock_name}</span>
+              {market === 'all' && <MarketBadge market={c.market} />}
               {c.alert && (
                 <span className="flex items-center gap-0.5 text-xs font-medium text-red-600 bg-red-50 px-1.5 py-0.5 rounded">
                   <AlertTriangle className="w-3 h-3" />暴增
@@ -79,7 +91,7 @@ export function SkillDashboard({ market, searchQuery }: Props) {
               <div className="flex items-center gap-1 text-xs text-slate-400 mb-0.5">
                 <TrendingUp className="w-3 h-3" />大股東
               </div>
-              <span className="font-medium text-slate-700">{c.big_holder_ratio_latest.toFixed(1)}%</span>
+              <span className="font-medium text-slate-700">{(c.big_holder_ratio || 0).toFixed(1)}%</span>
               <ChangeTag value={c.latest_week_change} suffix="%" />
             </div>
             <div className="text-center">
@@ -97,4 +109,4 @@ export function SkillDashboard({ market, searchQuery }: Props) {
       ))}
     </div>
   )
-}
+  }
