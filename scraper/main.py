@@ -506,6 +506,33 @@ class CloudflareD1Writer:
             total += len(batch)
 
         log.info(f"upsert_distributions: {total} 筆完成")
+    def upsert_stocks(self, stocks: list[dict]):
+        """批量寫入/更新股票基本資料。"""
+        if not stocks:
+            return
+        batch_size = 10
+        for i in range(0, len(stocks), batch_size):
+            batch = stocks[i:i + batch_size]
+            placeholders = ', '.join(['(?, ?, ?, ?)'] * len(batch))
+            sql = f"""
+                INSERT INTO stocks (stock_code, stock_name, market, updated_at)
+                VALUES {placeholders}
+                ON CONFLICT(stock_code) DO UPDATE SET
+                stock_name=excluded.stock_name,
+                market=excluded.market,
+                updated_at=excluded.updated_at
+            """
+            params = []
+            for s in batch:
+                params.extend([
+                    str(s.get("stock_code", "")),
+                    str(s.get("stock_name", "")),
+                    str(s.get("market", "")),
+                    tw_now().strftime("%Y-%m-%d"),
+                ])
+            self.execute_sql(sql, params)
+        log.info(f"upsert_stocks: {len(stocks)} 筆完成")
+
     def upsert_skill_analysis(self, analysis_date: str, candidates: list[dict]):
         """寫入 Skill 分析結果。"""
         sql = """
@@ -644,7 +671,26 @@ def main():
     if not twse_stocks.empty:
         save_json(twse_stocks.head(1000).to_dict(orient="records"), "twse_stocks.json")
     if not tpex_stocks.empty:
-        save_json(tpex_stocks.head(1000).to_dict(orient="records"), "tpex_stocks.json")
+        save_json(tpex_stocks.head(1000).to_dict(orient="records"), "tpex_stocks.json"
+
+    # 5. 寫入股票清單到 D1
+    if d1:
+        all_stocks = []
+        if not twse_stocks.empty:
+            for _, row in twse_stocks.iterrows():
+                code = str(row.get("Code", row.get("股票代號", ""))).strip()
+                name = str(row.get("Name", row.get("股票名稱", ""))).strip()
+                if code:
+                    all_stocks.append({"stock_code": code, "stock_name": name, "market": "twse"})
+        if not tpex_stocks.empty:
+            for _, row in tpex_stocks.iterrows():
+                code = str(row.get("Code", row.get("股票代號", ""))).strip()
+                name = str(row.get("Name", row.get("股票名稱", ""))).strip()
+                if code:
+                    all_stocks.append({"stock_code": code, "stock_name": name, "market": "tpex"})
+        if all_stocks:
+            d1.upsert_stocks(all_stocks)
+            log.info(f"已寫入 {len(all_stocks)} 筆股票基本資料"))
 
     log.info("\n" + "=" * 60)
     log.info("MSH 爬蟲執行完成")
