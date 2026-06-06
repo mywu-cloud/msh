@@ -32,7 +32,7 @@ export default function HomePage() {
           <div className="flex items-center justify-between">
             <MarketTabs active={activeMarket} onChange={setActiveMarket} />
             <div className="text-xs text-slate-400 pb-3">
-              更新時間：每週六 16:00
+              資料來源：集保所 TDCC
             </div>
           </div>
         </div>
