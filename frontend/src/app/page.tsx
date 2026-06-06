@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import { SkillDashboard } from '@/components/SkillDashboard'
-import { StatsBar } from '@/components/StatsBar'
 import { SearchBar } from '@/components/SearchBar'
 import { MarketTabs } from '@/components/MarketTabs'
 
@@ -27,9 +26,7 @@ export default function HomePage() {
           placeholder="搜尋股票代號或名稱..."
         />
       </div>
-
-      <StatsBar />
-
+      
       <div className="card p-0 overflow-hidden">
         <div className="border-b border-surface-border px-6 pt-4">
           <div className="flex items-center justify-between">
