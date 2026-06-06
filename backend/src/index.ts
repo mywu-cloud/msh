@@ -89,7 +89,7 @@ async function handleSkillAnalysis(request: Request, env: Env): Promise<Response
 async function handleBigHolderChanges(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const market = url.searchParams.get("market") || "all";
-  const limit = Math.min(parseInt(url.searchParams.get("limit") || "100"), 200);
+  const limit = Math.min(parseInt(url.searchParams.get("limit") || "100"), 5000);
   const sort = url.searchParams.get("sort") || "total_change";
   const weeks = Math.min(parseInt(url.searchParams.get("weeks") || "6"), 12);
 
