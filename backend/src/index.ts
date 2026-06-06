@@ -83,6 +83,131 @@ async function handleSkillAnalysis(request: Request, env: Env): Promise<Response
 }
 
 /**
+ * GET /api/big-holder-changes
+ * 大股東持有比率週增減排行（類神秘金字塔格式）
+ */
+async function handleBigHolderChanges(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const market = url.searchParams.get("market") || "all";
+  const limit = Math.min(parseInt(url.searchParams.get("limit") || "100"), 200);
+  const sort = url.searchParams.get("sort") || "total_change";
+  const weeks = Math.min(parseInt(url.searchParams.get("weeks") || "6"), 12);
+
+  const cacheKey = `bigholderchanges:${market}:${limit}:${sort}:${weeks}`;
+  const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
+  if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
+
+  try {
+    const datesResult = await env.DB.prepare(`
+      SELECT DISTINCT date FROM holder_distribution
+      ORDER BY date DESC LIMIT ${weeks + 1}
+    `).all();
+
+    const allDates = (datesResult.results || []).map((r: Record<string, unknown>) => r.date as string).sort();
+    if (allDates.length < 2) {
+      return jsonResponse({ meta: { market, weeks: allDates.length, dates: allDates }, data: [] });
+    }
+
+    const weekDates = allDates.slice(-(weeks));
+    const prevDate = allDates.length > weeks ? allDates[allDates.length - weeks - 1] : allDates[0];
+    const allNeeded = [...new Set([prevDate, ...weekDates])];
+    const datesList = allNeeded.map(d => `'${d}'`).join(",");
+
+    let marketFilter = "";
+    if (market === "twse") {
+      marketFilter = `AND si.market = 'twse'`;
+    } else if (market === "tpex") {
+      marketFilter = `AND si.market = 'tpex'`;
+    }
+
+    const sql = `
+      SELECT
+        hd.stock_code,
+        si.stock_name,
+        si.market,
+        si.industry,
+        hd.date,
+        SUM(CASE WHEN CAST(hd.bracket AS INTEGER) >= 10 AND CAST(hd.bracket AS INTEGER) != 17 THEN hd.ratio ELSE 0 END) as big_holder_ratio
+      FROM holder_distribution hd
+      LEFT JOIN stock_info si ON hd.stock_code = si.stock_code
+      WHERE hd.date IN (${datesList})
+      ${marketFilter}
+      GROUP BY hd.stock_code, hd.date
+      ORDER BY hd.stock_code, hd.date ASC
+    `;
+
+    const rawResult = await env.DB.prepare(sql).all();
+    const rows = rawResult.results || [];
+
+    const stockMap = new Map();
+    for (const row of rows) {
+      const code = row.stock_code;
+      if (!stockMap.has(code)) {
+        stockMap.set(code, {
+          stock_code: code,
+          stock_name: row.stock_name || "",
+          market: row.market || "",
+          industry: row.industry || "",
+          ratioByDate: {},
+        });
+      }
+      stockMap.get(code).ratioByDate[row.date] = Math.round((row.big_holder_ratio || 0) * 100) / 100;
+    }
+
+    const latestDate = weekDates[weekDates.length - 1];
+    const result = [];
+
+    for (const [, stock] of stockMap) {
+      if (!stock.ratioByDate[latestDate]) continue;
+      const weekChanges = {};
+      let totalChange = 0;
+      for (let i = 0; i < weekDates.length; i++) {
+        const d = weekDates[i];
+        const curr = stock.ratioByDate[d] ?? null;
+        const prev = i === 0 ? (stock.ratioByDate[prevDate] ?? null) : (stock.ratioByDate[weekDates[i - 1]] ?? null);
+        if (curr !== null && prev !== null) {
+          const change = Math.round((curr - prev) * 100) / 100;
+          weekChanges[d] = change;
+          totalChange += change;
+        } else {
+          weekChanges[d] = 0;
+        }
+      }
+      totalChange = Math.round(totalChange * 100) / 100;
+      result.push({
+        stock_code: stock.stock_code,
+        stock_name: stock.stock_name,
+        market: stock.market,
+        industry: stock.industry,
+        week_changes: weekChanges,
+        total_change: totalChange,
+        latest_change: weekChanges[latestDate] || 0,
+        latest_ratio: stock.ratioByDate[latestDate] || 0,
+        week_dates: weekDates,
+      });
+    }
+
+    if (sort === "latest_change") {
+      result.sort((a, b) => b.latest_change - a.latest_change);
+    } else {
+      result.sort((a, b) => b.total_change - a.total_change);
+    }
+
+    const topResult = result.slice(0, limit);
+    const responseData = {
+      meta: { market, limit, sort, weeks: weekDates.length, week_dates: weekDates, count: topResult.length, generated_at: new Date().toISOString() },
+      data: topResult,
+    };
+    const responseText = JSON.stringify(responseData);
+    if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 3600 });
+    return new Response(responseText, { headers: CORS_HEADERS });
+  } catch (err) {
+    console.error("handleBigHolderChanges error:", err);
+    return errorResponse("Database query failed", 500);
+  }
+}
+
+/**
  * GET /api/distribution/:stockCode
  */
 async function handleDistribution(request: Request, env: Env, stockCode: string): Promise<Response> {
@@ -482,6 +607,8 @@ export default {
 
     if (path === "/api/skill-analysis" || path === "/api/skill-analysis/")
       return handleSkillAnalysis(request, env);
+    if (path === "/api/big-holder-changes" || path === "/api/big-holder-changes/")
+      return handleBigHolderChanges(request, env);
     if (path === "/api/top-changes" || path === "/api/top-changes/")
       return handleTopChanges(request, env);
     if (path === "/api/search" || path === "/api/search/")
