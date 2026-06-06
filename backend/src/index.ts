@@ -103,7 +103,9 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
       ORDER BY date DESC LIMIT ${weeks + 1}
     `).all();
 
-    const allDates = (datesResult.results || []).map((r: Record<string, unknown>) => r.date as string).sort();
+    const allDates = (datesResult.results || []).map(
+      (r: Record<string, unknown>) => r.date as string
+    ).sort();
     if (allDates.length < 2) {
       return jsonResponse({ meta: { market, weeks: allDates.length, dates: allDates }, data: [] });
     }
@@ -137,10 +139,18 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
     `;
 
     const rawResult = await env.DB.prepare(sql).all();
-    const rows = rawResult.results || [];
+    const rawRows = rawResult.results || [];
 
-    const stockMap = new Map();
-    for (const rawRow of rows) {
+    type StockEntry = {
+      stock_code: string;
+      stock_name: string;
+      market: string;
+      industry: string;
+      ratioByDate: Record<string, number>;
+    };
+    const stockMap = new Map<string, StockEntry>();
+
+    for (const rawRow of rawRows) {
       const row = rawRow as { stock_code: string; stock_name: string; market: string; industry: string; date: string; big_holder_ratio: number };
       const code = row.stock_code;
       if (!stockMap.has(code)) {
@@ -152,15 +162,26 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
           ratioByDate: {},
         });
       }
-      stockMap.get(code)!.ratioByDate[row.date] = Math.round((row.big_holder_ratio || 0) * 100) / 100;
-    }}
+      const entry = stockMap.get(code) as StockEntry;
+      entry.ratioByDate[row.date] = Math.round((row.big_holder_ratio || 0) * 100) / 100;
+    }
 
     const latestDate = weekDates[weekDates.length - 1];
-    const result = [];
+    const result: Array<{
+      stock_code: string;
+      stock_name: string;
+      market: string;
+      industry: string;
+      week_changes: Record<string, number>;
+      total_change: number;
+      latest_change: number;
+      latest_ratio: number;
+      week_dates: string[];
+    }> = [];
 
     for (const [, stock] of stockMap) {
       if (!stock.ratioByDate[latestDate]) continue;
-      const weekChanges = {};
+      const weekChanges: Record<string, number> = {};
       let totalChange = 0;
       for (let i = 0; i < weekDates.length; i++) {
         const d = weekDates[i];
@@ -196,7 +217,13 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
 
     const topResult = result.slice(0, limit);
     const responseData = {
-      meta: { market, limit, sort, weeks: weekDates.length, week_dates: weekDates, count: topResult.length, generated_at: new Date().toISOString() },
+      meta: {
+        market, limit, sort,
+        weeks: weekDates.length,
+        week_dates: weekDates,
+        count: topResult.length,
+        generated_at: new Date().toISOString(),
+      },
       data: topResult,
     };
     const responseText = JSON.stringify(responseData);
