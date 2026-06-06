@@ -140,7 +140,8 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
     const rows = rawResult.results || [];
 
     const stockMap = new Map();
-    for (const row of rows) {
+    for (const rawRow of rows) {
+      const row = rawRow as { stock_code: string; stock_name: string; market: string; industry: string; date: string; big_holder_ratio: number };
       const code = row.stock_code;
       if (!stockMap.has(code)) {
         stockMap.set(code, {
@@ -151,8 +152,8 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
           ratioByDate: {},
         });
       }
-      stockMap.get(code).ratioByDate[row.date] = Math.round((row.big_holder_ratio || 0) * 100) / 100;
-    }
+      stockMap.get(code)!.ratioByDate[row.date] = Math.round((row.big_holder_ratio || 0) * 100) / 100;
+    }}
 
     const latestDate = weekDates[weekDates.length - 1];
     const result = [];
