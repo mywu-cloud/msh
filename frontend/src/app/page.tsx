@@ -14,10 +14,10 @@ export default function HomePage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
-            大股東籌碼分析
+            大股東持有張數週增減
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            基於 TDCC 集保股權分散表，篩選籌碼集中起漲潛力標的
+            大股東持有比率週增減排行，按累計增幅由高至低排序
           </p>
         </div>
         <SearchBar
