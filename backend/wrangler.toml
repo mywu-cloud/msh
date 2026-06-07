@@ -14,3 +14,7 @@ ENVIRONMENT = "production"
 
 [build]
 command = "npm run build"
+
+# Secrets (set via: wrangler secret put FINMIND_TOKEN)
+# FINMIND_TOKEN - FinMind API token for price & industry data
+# Get token at: https://finmindtrade.com/
