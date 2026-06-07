@@ -38,8 +38,11 @@ interface ApiResponse {
 }
 
 interface Props {
-  market: 'all' | 'twse' | 'tpex'
+  market: 'twse' | 'tpex'
   searchQuery: string
+  industry?: string
+  showEtf?: boolean
+  etfOnly?: boolean
 }
 
 type SortKey = 'rank' | 'stock_code' | 'industry' | 'total_change' | 'latest_change' | 'latest_ratio' | 'price_close' | 'price_change_pct' | string
@@ -93,12 +96,6 @@ function PriceCell({ price }: { price?: PriceInfo | null }) {
   )
 }
 
-function MarketBadge({ market }: { market: string }) {
-  if (market === 'twse') return <span className="text-xs px-1 py-0.5 rounded bg-blue-50 text-blue-600">上市</span>
-  if (market === 'tpex') return <span className="text-xs px-1 py-0.5 rounded bg-green-50 text-green-600">上櫃</span>
-  return null
-}
-
 function SortIcon({ col, sortKey, sortDir }: { col: string; sortKey: SortKey; sortDir: SortDir }) {
   if (sortKey !== col) return <ChevronsUpDown className="w-3 h-3 inline ml-0.5 text-slate-400" />
   if (sortDir === 'desc') return <ChevronDown className="w-3 h-3 inline ml-0.5 text-primary-600" />
@@ -108,7 +105,6 @@ function SortIcon({ col, sortKey, sortDir }: { col: string; sortKey: SortKey; so
 function StockTable({
   rows,
   weekDates,
-  showMarket,
   startIndex,
   sortKey,
   sortDir,
@@ -117,7 +113,6 @@ function StockTable({
 }: {
   rows: BigHolderRow[]
   weekDates: string[]
-  showMarket: boolean
   startIndex: number
   sortKey: SortKey
   sortDir: SortDir
@@ -186,9 +181,6 @@ function StockTable({
                       {row.stock_name && (
                         <span className="ml-1.5 text-slate-600 text-xs">{row.stock_name}</span>
                       )}
-                      {showMarket && (
-                        <span className="ml-1"><MarketBadge market={row.market} /></span>
-                      )}
                     </div>
                   </Link>
                 </td>
@@ -216,10 +208,9 @@ function StockTable({
   )
 }
 
-export function SkillDashboard({ market, searchQuery }: Props) {
+export function SkillDashboard({ market, searchQuery, industry = '', showEtf = true, etfOnly = false }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('total_change')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
-  const [showEtf, setShowEtf] = useState(false)
 
   const { data, error, isLoading } = useSWR<ApiResponse>(
     `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=6&include_price=1`,
@@ -256,20 +247,20 @@ export function SkillDashboard({ market, searchQuery }: Props) {
     is_etf: isEtf(r.stock_code, r.stock_name || '')
   }))
   const weekDates: string[] = data.meta?.week_dates || (rows[0]?.week_dates || [])
-
-  // Check if any row has price data
   const hasPrice = rows.some(r => r.price && r.price.close)
 
   const filtered = rows.filter(r => {
+    if (etfOnly) return r.is_etf === true
+    if (!showEtf && r.is_etf) return false
     if (searchQuery) {
       const q = searchQuery.toLowerCase()
       if (!r.stock_code.includes(q) && !(r.stock_name || '').includes(q) && !(r.industry || '').toLowerCase().includes(q)) return false
     }
+    if (industry) {
+      if ((r.industry || '') !== industry) return false
+    }
     return true
   })
-
-  const stocks = filtered.filter(r => !r.is_etf)
-  const etfs = filtered.filter(r => r.is_etf)
 
   function sortRows(arr: BigHolderRow[]) {
     return [...arr].sort((a, b) => {
@@ -291,54 +282,25 @@ export function SkillDashboard({ market, searchQuery }: Props) {
     })
   }
 
-  const sortedStocks = sortRows(stocks)
-  const sortedEtfs = sortRows(etfs)
+  const sortedRows = sortRows(filtered)
+
+  if (sortedRows.length === 0) return (
+    <div className="p-8 text-center text-slate-400">
+      <p>找不到符合條件的股票</p>
+    </div>
+  )
 
   return (
-    <div>
-      <div className="overflow-hidden">
-        <StockTable
-          rows={sortedStocks}
-          weekDates={weekDates}
-          showMarket={market === 'all'}
-          startIndex={0}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSort={handleSort}
-          hasPrice={hasPrice}
-        />
-        {sortedEtfs.length > 0 && (
-          <div className="border-t border-slate-200 mt-2">
-            <button
-              className="w-full flex items-center justify-between px-4 py-2 bg-amber-50 hover:bg-amber-100 transition-colors text-sm font-medium text-amber-800"
-              onClick={() => setShowEtf(!showEtf)}
-            >
-              <span className="flex items-center gap-2">
-                ETF / 指數型基金
-                <span className="text-xs text-amber-600 font-normal">（{sortedEtfs.length} 檔）</span>
-              </span>
-              {showEtf ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </button>
-            {showEtf && (
-              <StockTable
-                rows={sortedEtfs}
-                weekDates={weekDates}
-                showMarket={market === 'all'}
-                startIndex={0}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={handleSort}
-                hasPrice={hasPrice}
-              />
-            )}
-          </div>
-        )}
-        {filtered.length === 0 && (
-          <div className="p-8 text-center text-slate-400">
-            <p>找不到符合條件的股票</p>
-          </div>
-        )}
-      </div>
+    <div className="overflow-hidden">
+      <StockTable
+        rows={sortedRows}
+        weekDates={weekDates}
+        startIndex={0}
+        sortKey={sortKey}
+        sortDir={sortDir}
+        onSort={handleSort}
+        hasPrice={hasPrice}
+      />
     </div>
   )
 }
