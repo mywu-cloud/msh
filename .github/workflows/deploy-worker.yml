@@ -23,11 +23,12 @@ jobs:
         run: npm install
       - name: Set FINMIND_TOKEN secret
         working-directory: backend
-        if: ${{ secrets.FINMIND_TOKEN != '' }}
-        run: echo "${{ secrets.FINMIND_TOKEN }}" | npx wrangler secret put FINMIND_TOKEN
+        continue-on-error: true
+        run: echo "$FINMIND_TOKEN_VALUE" | npx wrangler secret put FINMIND_TOKEN
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          FINMIND_TOKEN_VALUE: ${{ secrets.FINMIND_TOKEN }}
       - name: Deploy to Cloudflare Workers
         working-directory: backend
         run: npx wrangler deploy
