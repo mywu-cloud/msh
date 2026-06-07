@@ -24,18 +24,28 @@ interface StockChange {
   score?: number
 }
 
+interface ApiResponse {
+  meta?: { type: string; market: string; limit: number; count: number }
+  data?: StockChange[]
+}
+
 export default function TopChangesPage() {
   const [market, setMarket] = useState<Market>('all')
   const [type, setType] = useState<ChangeType>('increase')
   const [search, setSearch] = useState('')
 
-  const { data, error, isLoading } = useSWR<StockChange[]>(
+  const { data: rawData, error, isLoading } = useSWR<ApiResponse | StockChange[]>(
     `${API_BASE}/api/top-changes?market=${market}&type=${type}`,
     fetcher,
     { refreshInterval: 60000 }
   )
 
-  const filtered = (data || []).filter(s =>
+  // Handle both array response and { data: [] } response shape
+  const data: StockChange[] = Array.isArray(rawData)
+    ? rawData
+    : ((rawData as ApiResponse)?.data || [])
+
+  const filtered = data.filter(s =>
     s.stock_code.includes(search) ||
     (s.stock_name || '').includes(search)
   )
