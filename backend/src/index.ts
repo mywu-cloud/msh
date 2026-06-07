@@ -37,8 +37,6 @@ async function fetchFinMindPrice(
   date: string
 ): Promise<Map<string, { close: number; change: number; change_pct: number }>> {
   const result = new Map<string, { close: number; change: number; change_pct: number }>();
-  // FinMind batch query for TaiwanStockPrice
-  // We query one date; use start_date = date, end_date = date
   try {
     const url = new URL(FINMIND_API);
     url.searchParams.set("dataset", "TaiwanStockPrice");
@@ -46,7 +44,7 @@ async function fetchFinMindPrice(
     url.searchParams.set("token", token);
     const res = await fetch(url.toString(), { headers: { "User-Agent": "MSH-API/1.0" } });
     if (!res.ok) return result;
-    const json = (await res.json()) as { status: number; data: Array<{ stock_id: string; close: number; spread: number; max: number; min: number }> };
+    const json = (await res.json()) as { status: number; data: Array<{ stock_id: string; close: number; spread: number }> };
     if (json.status !== 200 || !Array.isArray(json.data)) return result;
     for (const row of json.data) {
       if (stockCodes.includes(row.stock_id)) {
@@ -155,12 +153,7 @@ async function handleSkillAnalysis(request: Request, env: Env): Promise<Response
 /**
  * GET /api/big-holder-changes
  * 大股東持有比率週增減排行
- * Query params:
- *   market=all|twse|tpex
- *   limit=100 (max 5000)
- *   sort=total_change|latest_change
- *   weeks=6 (max 12)
- *   include_price=1   -- attach close/change/change_pct from FinMind
+ * week_changes values: number = actual change, null = no data for that week
  */
 async function handleBigHolderChanges(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -249,14 +242,14 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
     const latestDate = weekDates[weekDates.length - 1];
     const result: Array<{
       stock_code: string; stock_name: string; market: string; industry: string;
-      week_changes: Record<string, number>;
+      week_changes: Record<string, number | null>;
       total_change: number; latest_change: number; latest_ratio: number;
       week_dates: string[];
     }> = [];
 
     for (const [, stock] of stockMap) {
       if (!stock.ratioByDate[latestDate]) continue;
-      const weekChanges: Record<string, number> = {};
+      const weekChanges: Record<string, number | null> = {};
       let totalChange = 0;
       for (let i = 0; i < weekDates.length; i++) {
         const d = weekDates[i];
@@ -269,7 +262,8 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
           weekChanges[d] = change;
           totalChange += change;
         } else {
-          weekChanges[d] = 0;
+          // null = no data for this week (not the same as 0 change)
+          weekChanges[d] = null;
         }
       }
       totalChange = Math.round(totalChange * 100) / 100;
@@ -294,12 +288,10 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
 
     const topResult = result.slice(0, limit);
 
-    // ── Attach price data from FinMind ──────────────────────────────────────
     type PriceInfo = { close: number; change: number; change_pct: number };
     let priceMap = new Map<string, PriceInfo>();
     if (includePrice && env.FINMIND_TOKEN) {
       const token = env.FINMIND_TOKEN;
-      // latestDate is YYYY-MM-DD
       const stockCodes = topResult.map(r => r.stock_code);
       priceMap = await fetchFinMindPrice(token, stockCodes, latestDate);
     }
@@ -330,7 +322,6 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
 
 /**
  * GET /api/price?codes=2330,2317&date=2026-06-05
- * Proxy FinMind price for given stock codes + date
  */
 async function handlePrice(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -351,7 +342,6 @@ async function handlePrice(request: Request, env: Env): Promise<Response> {
 
 /**
  * POST /api/sync-industry
- * Fetch TaiwanStockInfo from FinMind and update stock_info table
  */
 async function handleSyncIndustry(request: Request, env: Env): Promise<Response> {
   if (!env.FINMIND_TOKEN) return errorResponse("FINMIND_TOKEN not configured", 503);
@@ -522,10 +512,6 @@ async function handleStats(env: Env): Promise<Response> {
 
 // ─── CSV Upload ──────────────────────────────────────────────────────────────
 
-/**
- * POST /api/upload-csv
- * 後端接收 TDCC CSV 並匯入 D1
- */
 async function handleUploadCsv(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") return jsonResponse({ error: "Method Not Allowed" }, 405);
 
@@ -560,11 +546,6 @@ async function handleUploadCsv(request: Request, env: Env): Promise<Response> {
 
   const lines = csvText.trim().split(/\r?\n/).filter(l => l.trim());
   const firstCells = lines[0].split(",").map(c => c.trim().replace(/^"|"$/g, ""));
-
-  let source = sourceHint;
-  if (!source) {
-    source = "tdcc";
-  }
 
   return handleTdccCsv(lines, firstCells, dateParam, env);
 }
@@ -653,7 +634,7 @@ async function handleTdccCsv(
     } catch { errors += cnt; }
   }
 
-  // After inserting, trigger stock_info sync if FinMind token available
+  // Background sync of stock_info if FinMind token available
   if (env.FINMIND_TOKEN) {
     try {
       const newCodes = [...new Set(dataRows.map(r => (r[stockCol] || "").replace(/\s/g, "").substring(0, 6)).filter(Boolean))];
@@ -664,7 +645,6 @@ async function handleTdccCsv(
         const existingSet = new Set((existing.results || []).map((r: Record<string, unknown>) => r.stock_code as string));
         const missing = newCodes.filter(c => !existingSet.has(c));
         if (missing.length > 0) {
-          // Background sync - fire and forget
           fetchFinMindIndustry(env.FINMIND_TOKEN).then(async (infoMap) => {
             const stmts = missing
               .filter(c => infoMap.has(c))
