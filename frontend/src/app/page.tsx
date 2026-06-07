@@ -14,7 +14,7 @@ export default function HomePage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
-            大股東持有張數週增減
+            大股東持有比率週增減排行
           </h1>
           <p className="text-sm text-slate-500 mt-1">
             大股東持有比率週增減排行，按累計增幅由高至低排序
@@ -26,7 +26,7 @@ export default function HomePage() {
           placeholder="搜尋股票代號或名稱..."
         />
       </div>
-      
+
       <div className="card p-0 overflow-hidden">
         <div className="border-b border-surface-border px-6 pt-4">
           <div className="flex items-center justify-between">
