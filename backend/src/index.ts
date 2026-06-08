@@ -669,7 +669,7 @@ async function handleTdccCsv(
 
   let inserted = 0, skipped = 0, errors = 0;
   let firstError = "";
-  const BATCH = 500;
+  const BATCH = 100; // D1 limit: 999 params; 100*6=600
 
   for (let i = 0; i < dataRows.length; i += BATCH) {
     const batch = dataRows.slice(i, i + BATCH);
@@ -702,7 +702,7 @@ async function handleTdccCsv(
     const cnt = params.length / 6;
     const placeholders = Array(cnt).fill("(?,?,?,?,?,?)").join(",");
     const sql = `
-      INSERT INTO holder_distribution (stock_code, date, bracket, holders, shares, ratio)
+      INSERT INTO distributions (stock_code, date, bracket, holders, shares, ratio)
       VALUES ${placeholders}
       ON CONFLICT(stock_code, date, bracket) DO UPDATE SET
         holders = excluded.holders,
