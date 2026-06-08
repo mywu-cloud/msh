@@ -34,8 +34,17 @@ function IndustrySelect({ market, value, onChange }: {
   )
 }
 
+type TabId = 'twse' | 'tpex' | 'etf'
+
+const TABS: { id: TabId; label: string; sub: string }[] = [
+  { id: 'twse', label: '上市', sub: '台灣證交所' },
+  { id: 'tpex', label: '上櫃', sub: '台灣櫃買中心' },
+  { id: 'etf', label: 'ETF', sub: '指數型基金' },
+]
+
 export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState('')
+  const [activeTab, setActiveTab] = useState<TabId>('twse')
   const [twseIndustry, setTwseIndustry] = useState('')
   const [tpexIndustry, setTpexIndustry] = useState('')
 
@@ -49,51 +58,47 @@ export default function HomePage() {
         <SearchBar value={searchQuery} onChange={setSearchQuery} placeholder="搜尋股票代號或名稱..." />
       </div>
 
-      {/* 三卡片同一列 */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
-
-        {/* 上市 */}
-        <div className="card p-0 overflow-hidden">
-          <div className="border-b border-surface-border px-4 pt-3 pb-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <div>
-                <span className="text-sm font-semibold text-slate-800">上市</span>
-                <span className="ml-1.5 text-xs text-slate-400">TWSE</span>
-              </div>
+      {/* Tab 切換列 */}
+      <div className="card p-0 overflow-hidden">
+        {/* Tab 按鈕列 */}
+        <div className="flex border-b border-surface-border">
+          {TABS.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={[
+                'flex items-center gap-1.5 px-5 py-3 text-sm font-medium transition-colors border-b-2 -mb-px',
+                activeTab === tab.id
+                  ? 'border-primary-500 text-primary-700 bg-primary-50'
+                  : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50',
+              ].join(' ')}
+            >
+              <span className="font-semibold">{tab.label}</span>
+              <span className={['text-xs', activeTab === tab.id ? 'text-primary-400' : 'text-slate-400'].join(' ')}>{tab.sub}</span>
+            </button>
+          ))}
+          {/* 右側集保所標示 + 產業下拉 */}
+          <div className="ml-auto flex items-center gap-3 px-4">
+            {activeTab === 'twse' && (
               <IndustrySelect market="twse" value={twseIndustry} onChange={setTwseIndustry} />
-            </div>
-            <span className="text-xs text-slate-400">集保所 TDCC</span>
-          </div>
-          <SkillDashboard market="twse" searchQuery={searchQuery} industry={twseIndustry} showEtf={false} etfOnly={false} />
-        </div>
-
-        {/* 上櫃 */}
-        <div className="card p-0 overflow-hidden">
-          <div className="border-b border-surface-border px-4 pt-3 pb-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <div>
-                <span className="text-sm font-semibold text-slate-800">上櫃</span>
-                <span className="ml-1.5 text-xs text-slate-400">TPEx</span>
-              </div>
+            )}
+            {activeTab === 'tpex' && (
               <IndustrySelect market="tpex" value={tpexIndustry} onChange={setTpexIndustry} />
-            </div>
+            )}
             <span className="text-xs text-slate-400">集保所 TDCC</span>
           </div>
+        </div>
+
+        {/* Tab 內容 */}
+        {activeTab === 'twse' && (
+          <SkillDashboard market="twse" searchQuery={searchQuery} industry={twseIndustry} showEtf={false} etfOnly={false} />
+        )}
+        {activeTab === 'tpex' && (
           <SkillDashboard market="tpex" searchQuery={searchQuery} industry={tpexIndustry} showEtf={false} etfOnly={false} />
-        </div>
-
-        {/* ETF */}
-        <div className="card p-0 overflow-hidden">
-          <div className="border-b border-surface-border px-4 pt-3 pb-2 flex items-center justify-between bg-amber-50">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-amber-800">ETF</span>
-              <span className="text-xs text-slate-400">指數型基金</span>
-            </div>
-            <span className="text-xs text-slate-400">集保所 TDCC</span>
-          </div>
+        )}
+        {activeTab === 'etf' && (
           <SkillDashboard market="twse" searchQuery={searchQuery} industry="" showEtf={true} etfOnly={true} />
-        </div>
-
+        )}
       </div>
     </div>
   )
