@@ -81,7 +81,7 @@ async function fetchFinMindIndustry(
     if (json.status !== 200 || !Array.isArray(json.data)) return result;
     for (const row of json.data) {
       const market = row.type === "twse" || row.type === "上市" ? "twse" :
-                     row.type === "tpex" || row.type === "上櫃" ? "tpex" : row.type;
+        row.type === "tpex" || row.type === "上櫃" ? "tpex" : row.type;
       result.set(row.stock_id, {
         industry: row.industry_category || "",
         market,
@@ -122,9 +122,9 @@ async function handleSkillAnalysis(request: Request, env: Env): Promise<Response
 
     const sql = `
       SELECT sa.stock_code, si.stock_name, si.market, si.industry,
-             sa.analysis_date, sa.skill_score, sa.big_holder_ratio,
-             sa.big_holder_trend, sa.retail_trend, sa.holder_change,
-             sa.latest_week_change, sa.alert
+        sa.analysis_date, sa.skill_score, sa.big_holder_ratio,
+        sa.big_holder_trend, sa.retail_trend, sa.holder_change,
+        sa.latest_week_change, sa.alert
       FROM skill_analysis sa
       LEFT JOIN stock_info si ON sa.stock_code = si.stock_code
       WHERE 1=1 ${dateFilter} ${marketFilter}
@@ -162,8 +162,9 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
   const sort = url.searchParams.get("sort") || "total_change";
   const weeks = Math.min(parseInt(url.searchParams.get("weeks") || "6"), 12);
   const includePrice = url.searchParams.get("include_price") === "1";
+  const industryFilter = url.searchParams.get("industry") || "";
 
-  const cacheKey = `bigholderchanges:${market}:${limit}:${sort}:${weeks}:${includePrice ? "p" : "np"}`;
+  const cacheKey = `bigholderchanges:${market}:${limit}:${sort}:${weeks}:${includePrice ? "p" : "np"}:${industryFilter}`;
   const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
   if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
 
@@ -185,12 +186,16 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
     const allNeeded = [...new Set([prevDate, ...weekDates])];
     const datesList = allNeeded.map(d => `'${d}'`).join(",");
 
+    // Market filter: use si.market if available, fallback to stock_code pattern
     let marketFilter = "";
     if (market === "twse") {
-      marketFilter = `AND si.market = 'twse'`;
+      marketFilter = `AND (si.market = 'twse' OR (COALESCE(si.market, '') = '' AND hd.stock_code NOT LIKE '0%' AND CAST(hd.stock_code AS INTEGER) BETWEEN 1000 AND 9999))`;
     } else if (market === "tpex") {
-      marketFilter = `AND si.market = 'tpex'`;
+      marketFilter = `AND (si.market = 'tpex' OR (COALESCE(si.market, '') = '' AND (CAST(hd.stock_code AS INTEGER) >= 4000 OR hd.stock_code GLOB '[4-9][0-9][0-9][0-9]')))`;
     }
+
+    // Industry filter
+    const indFilter = industryFilter ? `AND si.industry = '${industryFilter.replace(/'/g, "''")}'` : "";
 
     const sql = `
       SELECT
@@ -204,6 +209,7 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
       LEFT JOIN stock_info si ON hd.stock_code = si.stock_code
       WHERE hd.date IN (${datesList})
       ${marketFilter}
+      ${indFilter}
       GROUP BY hd.stock_code, hd.date
       ORDER BY hd.stock_code, hd.date ASC
     `;
@@ -262,7 +268,6 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
           weekChanges[d] = change;
           totalChange += change;
         } else {
-          // null = no data for this week (not the same as 0 change)
           weekChanges[d] = null;
         }
       }
@@ -341,7 +346,42 @@ async function handlePrice(request: Request, env: Env): Promise<Response> {
 }
 
 /**
- * POST /api/sync-industry
+ * GET /api/industries?market=twse|tpex
+ * 回傳指定市場的產業類別清單
+ */
+async function handleIndustries(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const market = url.searchParams.get("market") || "";
+
+  const cacheKey = `industries:${market}`;
+  const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
+  if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
+
+  try {
+    let marketFilter = "";
+    if (market === "twse") marketFilter = "WHERE market = 'twse'";
+    else if (market === "tpex") marketFilter = "WHERE market = 'tpex'";
+
+    const sql = `
+      SELECT DISTINCT industry FROM stock_info
+      ${marketFilter}
+      AND industry != ''
+      ORDER BY industry ASC
+    `;
+    const result = await env.DB.prepare(sql).all();
+    const industries = (result.results || []).map((r: Record<string, unknown>) => r.industry as string).filter(Boolean);
+    const responseText = JSON.stringify({ market, industries });
+    if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 86400 });
+    return new Response(responseText, { headers: CORS_HEADERS });
+  } catch (err) {
+    console.error("handleIndustries error:", err);
+    return errorResponse("Query failed", 500);
+  }
+}
+
+/**
+ * GET or POST /api/sync-industry
+ * 從 FinMind 同步股票產業資訊到 D1
  */
 async function handleSyncIndustry(request: Request, env: Env): Promise<Response> {
   if (!env.FINMIND_TOKEN) return errorResponse("FINMIND_TOKEN not configured", 503);
@@ -352,7 +392,7 @@ async function handleSyncIndustry(request: Request, env: Env): Promise<Response>
 
     let updated = 0;
     const entries = Array.from(infoMap.entries());
-    const BATCH = 10;
+    const BATCH = 50; // Use larger batches to reduce round trips
 
     for (let i = 0; i < entries.length; i += BATCH) {
       const batch = entries.slice(i, i + BATCH);
@@ -371,10 +411,18 @@ async function handleSyncIndustry(request: Request, env: Env): Promise<Response>
       updated += batch.length;
     }
 
+    // Invalidate cached industries
+    if (env.CACHE) {
+      await env.CACHE.delete("industries:twse");
+      await env.CACHE.delete("industries:tpex");
+      await env.CACHE.delete("industries:");
+    }
+
     return jsonResponse({ success: true, updated, message: `已更新 ${updated} 筆股票資訊` });
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     console.error("handleSyncIndustry error:", err);
-    return errorResponse("Sync failed", 500);
+    return errorResponse(`Sync failed: ${msg}`, 500);
   }
 }
 
@@ -394,10 +442,10 @@ async function handleDistribution(request: Request, env: Env, stockCode: string)
       FROM holder_distribution hd
       LEFT JOIN stock_info si ON hd.stock_code = si.stock_code
       WHERE hd.stock_code = ?
-      AND hd.date IN (
-        SELECT DISTINCT date FROM holder_distribution
-        WHERE stock_code = ? ORDER BY date DESC LIMIT 12
-      )
+        AND hd.date IN (
+          SELECT DISTINCT date FROM holder_distribution
+          WHERE stock_code = ? ORDER BY date DESC LIMIT 12
+        )
       ORDER BY hd.date DESC, hd.bracket ASC
     `;
     const result = await env.DB.prepare(sql).bind(stockCode, stockCode).all();
@@ -444,8 +492,8 @@ async function handleTopChanges(request: Request, env: Env): Promise<Response> {
 
     const sql = `
       SELECT sa.stock_code, si.stock_name, si.market,
-             sa.big_holder_trend, sa.latest_week_change,
-             sa.skill_score, sa.alert, sa.analysis_date
+        sa.big_holder_trend, sa.latest_week_change,
+        sa.skill_score, sa.alert, sa.analysis_date
       FROM skill_analysis sa
       LEFT JOIN stock_info si ON sa.stock_code = si.stock_code
       WHERE sa.analysis_date = (SELECT MAX(analysis_date) FROM skill_analysis)
@@ -500,8 +548,8 @@ async function handleStats(env: Env): Promise<Response> {
         (SELECT MAX(date) FROM holder_distribution) as latest_date,
         (SELECT MIN(date) FROM holder_distribution) as earliest_date,
         (SELECT COUNT(*) FROM skill_analysis
-         WHERE analysis_date = (SELECT MAX(analysis_date) FROM skill_analysis)
-         AND alert = 1) as alert_count
+          WHERE analysis_date = (SELECT MAX(analysis_date) FROM skill_analysis)
+          AND alert = 1) as alert_count
     `;
     const result = await env.DB.prepare(sql).first();
     return jsonResponse({ data: result });
@@ -704,6 +752,8 @@ export default {
       return handlePrice(request, env);
     if (path === "/api/sync-industry" || path === "/api/sync-industry/")
       return handleSyncIndustry(request, env);
+    if (path === "/api/industries" || path === "/api/industries/")
+      return handleIndustries(request, env);
 
     const distMatch = path.match(/^\/api\/distribution\/([A-Z0-9]+)$/i);
     if (distMatch) return handleDistribution(request, env, distMatch[1].toUpperCase());
@@ -711,18 +761,19 @@ export default {
     if (path === "/" || path === "/api") {
       return jsonResponse({
         service: "MSH API",
-        version: "1.2.0",
+        version: "1.3.0",
         description: "股權分散表大股東籌碼分析 API",
         endpoints: [
           "GET /api/skill-analysis?market=twse|tpex|all&limit=20",
-          "GET /api/big-holder-changes?market=all&limit=5000&sort=total_change&weeks=6&include_price=1",
+          "GET /api/big-holder-changes?market=all&limit=5000&sort=total_change&weeks=6&include_price=1&industry=",
           "GET /api/distribution/:stockCode",
           "GET /api/top-changes?type=increase|decrease&market=all&limit=20",
           "GET /api/search?q=keyword",
           "GET /api/stats",
           "GET /api/price?codes=2330,2317&date=2026-06-05",
+          "GET /api/industries?market=twse|tpex",
           "POST /api/upload-csv (multipart/form-data: file, source=tdcc, date?)",
-          "POST /api/sync-industry (sync stock info from FinMind)",
+          "GET|POST /api/sync-industry (sync stock info from FinMind)",
         ],
       });
     }
