@@ -622,62 +622,79 @@ async function handleTdccCsv(
 ): Promise<Response> {
   const rows = lines.map(l => l.split(",").map(c => c.trim().replace(/^"|"$/g, "")));
 
-  const isHeader =
-    !/^\d{8}$/.test(firstCells[0]) && !/^\d{4,6}$/.test(firstCells[0]);
+  // Detect if first row is a header
+  // TDCC header example: 證券代號,持股/單位數分級,人數,股數/單位數,佔集保庫存數比例%
+  // TDCC data row example: 0050,1-999,62736,12168163,0.23
+  const firstCell = (firstCells[0] || "").trim();
+  const isHeader = !/^[0-9A-Za-z]{3,8}$/.test(firstCell);
   const dataRows = isHeader ? rows.slice(1) : rows;
+  const header = isHeader ? rows[0].map(h => h.toLowerCase()) : [];
 
-  let dateCol = 0, stockCol = 1, bracketCol = 2, holdersCol = 3, sharesCol = 4, ratioCol = 5;
+  // Column indices
+  // TDCC 5-col format (no date): [stock_code, bracket, holders, shares, ratio]
+  // TDCC 6-col format (with date): [date, stock_code, bracket, holders, shares, ratio]
+  let dateCol = -1, stockCol = 0, bracketCol = 1, holdersCol = 2, sharesCol = 3, ratioCol = 4;
+
   if (isHeader) {
-    const header = rows[0].map(h => h.toLowerCase());
     const findCol = (names: string[]) =>
       names.reduce<number>((f, n) => f >= 0 ? f : header.findIndex(h => h.includes(n)), -1);
     const d = findCol(["date", "日期", "scadate"]);
-    const s = findCol(["stock_code", "證券代號", "code"]);
-    const b = findCol(["bracket", "持股分級", "持股"]);
+    const s = findCol(["stock_code", "證券代號", "code", "股票"]);
+    const b = findCol(["bracket", "持股", "分級"]);
     const h = findCol(["holders", "人數"]);
-    const sh = findCol(["shares", "股數"]);
-    const r = findCol(["ratio", "比例", "佔"]);
+    const sh = findCol(["shares", "股數", "單位數"]);
+    const r = findCol(["ratio", "比例", "佔", "%"]);
     if (d >= 0) dateCol = d;
     if (s >= 0) stockCol = s;
     if (b >= 0) bracketCol = b;
     if (h >= 0) holdersCol = h;
     if (sh >= 0) sharesCol = sh;
     if (r >= 0) ratioCol = r;
+  } else if (/^\d{8}$/.test(firstCell)) {
+    // No header but first cell is 8-digit date
+    dateCol = 0; stockCol = 1; bracketCol = 2; holdersCol = 3; sharesCol = 4; ratioCol = 5;
   }
 
-  let dateStr = dateParam;
-  if (!dateStr && dataRows.length > 0) {
-    const v = dataRows[0][dateCol];
-    if (/^\d{8}$/.test(v)) dateStr = v;
+  // Resolve the ISO date to use
+  let isoDate = dateParam;
+  if (isoDate && isoDate.length === 8 && /^\d{8}$/.test(isoDate)) {
+    isoDate = `${isoDate.slice(0,4)}-${isoDate.slice(4,6)}-${isoDate.slice(6,8)}`;
   }
-  if (!dateStr) dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const isoDate =
-    dateStr.length === 8
-      ? `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`
-      : dateStr;
+  if (!isoDate && dataRows.length > 0 && dateCol >= 0) {
+    const v = (dataRows[0][dateCol] || "").trim();
+    if (/^\d{8}$/.test(v)) isoDate = `${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`;
+    else if (/^\d{4}-\d{2}-\d{2}$/.test(v)) isoDate = v;
+  }
+  if (!isoDate) isoDate = new Date().toISOString().slice(0, 10);
 
   let inserted = 0, skipped = 0, errors = 0;
+  let firstError = "";
   const BATCH = 500;
 
   for (let i = 0; i < dataRows.length; i += BATCH) {
-    const batch = dataRows
-      .slice(i, i + BATCH)
-      .filter(r => r.length > Math.max(stockCol, holdersCol, sharesCol));
+    const batch = dataRows.slice(i, i + BATCH);
     if (!batch.length) continue;
 
     const params: (string | number)[] = [];
     for (const row of batch) {
-      const code = (row[stockCol] || "").replace(/\s/g, "").substring(0, 6);
-      if (!code) { skipped++; continue; }
-      const rawDate = row[dateCol];
-      const rowDate =
-        /^\d{8}$/.test(rawDate)
-          ? `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6, 8)}`
-          : isoDate;
-      const bracket = row[bracketCol] || "";
+      const minCols = Math.max(stockCol, bracketCol, holdersCol, sharesCol, ratioCol) + 1;
+      if (row.length < minCols) { skipped++; continue; }
+
+      const code = (row[stockCol] || "").replace(/\s/g, "").substring(0, 10);
+      if (!code || !/^[0-9A-Za-z]{3,8}$/.test(code)) { skipped++; continue; }
+
+      let rowDate = isoDate;
+      if (dateCol >= 0 && row[dateCol]) {
+        const raw = row[dateCol].trim();
+        if (/^\d{8}$/.test(raw)) rowDate = `${raw.slice(0,4)}-${raw.slice(4,6)}-${raw.slice(6,8)}`;
+        else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) rowDate = raw;
+      }
+
+      const bracket = (row[bracketCol] || "").substring(0, 50);
       const holders = parseInt((row[holdersCol] || "0").replace(/,/g, "")) || 0;
       const shares = parseInt((row[sharesCol] || "0").replace(/,/g, "")) || 0;
       const ratio = parseFloat((row[ratioCol] || "0").replace(/,/g, "")) || 0;
+
       params.push(code, rowDate, bracket, holders, shares, ratio);
     }
     if (!params.length) continue;
@@ -695,13 +712,18 @@ async function handleTdccCsv(
     try {
       const result = await env.DB.prepare(sql).bind(...params).run();
       if (result.success) inserted += cnt; else errors += cnt;
-    } catch { errors += cnt; }
+    } catch(e) {
+      if (!firstError) firstError = e instanceof Error ? e.message : String(e);
+      errors += cnt;
+    }
   }
 
   // Background sync of stock_info if FinMind token available
   if (env.FINMIND_TOKEN) {
     try {
-      const newCodes = [...new Set(dataRows.map(r => (r[stockCol] || "").replace(/\s/g, "").substring(0, 6)).filter(Boolean))];
+      const newCodes = [...new Set(dataRows
+        .map(r => (r[stockCol] || "").replace(/\s/g, "").substring(0, 6))
+        .filter(c => /^[0-9A-Za-z]{3,8}$/.test(c)))];
       if (newCodes.length > 0) {
         const existing = await env.DB.prepare(
           `SELECT stock_code FROM stock_info WHERE stock_code IN (${newCodes.map(() => "?").join(",")}) AND industry != ''`
@@ -710,38 +732,36 @@ async function handleTdccCsv(
         const missing = newCodes.filter(c => !existingSet.has(c));
         if (missing.length > 0) {
           fetchFinMindIndustry(env.FINMIND_TOKEN).then(async (infoMap) => {
-            const stmts = missing
-              .filter(c => infoMap.has(c))
-              .map(c => {
-                const info = infoMap.get(c)!;
-                return env.DB.prepare(`
-                  INSERT INTO stock_info (stock_code, stock_name, market, industry)
-                  VALUES (?, ?, ?, ?)
-                  ON CONFLICT(stock_code) DO UPDATE SET
-                    stock_name = CASE WHEN excluded.stock_name != '' THEN excluded.stock_name ELSE stock_name END,
-                    market = CASE WHEN excluded.market != '' THEN excluded.market ELSE market END,
-                    industry = CASE WHEN excluded.industry != '' THEN excluded.industry ELSE industry END,
-                    updated_at = datetime('now')
-                `).bind(c, info.name, info.market, info.industry);
-              });
+            const stmts = missing.filter(c => infoMap.has(c)).map(c => {
+              const info = infoMap.get(c)!;
+              return env.DB.prepare(`
+                INSERT INTO stock_info (stock_code, stock_name, market, industry)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(stock_code) DO UPDATE SET
+                  stock_name = CASE WHEN excluded.stock_name != '' THEN excluded.stock_name ELSE stock_name END,
+                  market = CASE WHEN excluded.market != '' THEN excluded.market ELSE market END,
+                  industry = CASE WHEN excluded.industry != '' THEN excluded.industry ELSE industry END,
+                  updated_at = datetime('now')
+              `).bind(c, info.name, info.market, info.industry);
+            });
             if (stmts.length) await env.DB.batch(stmts);
           }).catch(console.error);
         }
       }
-    } catch (e) {
-      console.error("background sync error:", e);
-    }
+    } catch (e) { console.error("background sync error:", e); }
   }
 
   return jsonResponse({
-    success: true,
+    success: inserted > 0,
     source: "tdcc",
     message: `TDCC：匯入 ${inserted} 筆，略過 ${skipped} 筆，失敗 ${errors} 筆`,
     date: isoDate,
     total_rows: dataRows.length,
     inserted, skipped, errors,
+    ...(firstError ? { first_error: firstError } : {}),
   });
 }
+
 
 // ─── Main Router ─────────────────────────────────────────────────────────────
 
