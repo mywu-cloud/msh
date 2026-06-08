@@ -3,8 +3,9 @@
 import { useState, useRef } from 'react'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.tw-mywu.workers.dev'
+const CHUNK_ROWS = 3000  // 每批上傳筆數，避免 Worker CPU 超時
 
-interface UploadResult {
+interface ChunkResult {
   success: boolean
   message: string
   date?: string
@@ -14,10 +15,69 @@ interface UploadResult {
   error?: string
 }
 
+interface FileResult {
+  file: string
+  success: boolean
+  totalInserted: number
+  totalErrors: number
+  date: string
+  chunks: number
+  detail: string
+}
+
+async function uploadCsvInChunks(file: File): Promise<FileResult> {
+  const text = await file.text()
+  const lines = text.trim().split(/\r?\n/).filter(l => l.trim())
+  if (lines.length < 2) {
+    return { file: file.name, success: false, totalInserted: 0, totalErrors: 0, date: '', chunks: 0, detail: 'CSV 內容不足' }
+  }
+
+  const header = lines[0]
+  const dataLines = lines.slice(1)
+  const totalChunks = Math.ceil(dataLines.length / CHUNK_ROWS)
+
+  let totalInserted = 0
+  let totalErrors = 0
+  let date = ''
+
+  for (let i = 0; i < totalChunks; i++) {
+    const chunk = dataLines.slice(i * CHUNK_ROWS, (i + 1) * CHUNK_ROWS)
+    const chunkCsv = [header, ...chunk].join('\n')
+    const form = new FormData()
+    form.append('file', new Blob([chunkCsv], { type: 'text/csv' }), file.name)
+    form.append('source', 'tdcc')
+
+    const res = await fetch(`${API_BASE}/api/upload-csv`, { method: 'POST', body: form })
+    if (!res.ok) {
+      totalErrors += chunk.length
+      continue
+    }
+    const json: ChunkResult = await res.json()
+    if (json.success) {
+      totalInserted += json.inserted || 0
+      totalErrors += json.errors || 0
+      if (json.date && !date) date = json.date
+    } else {
+      totalErrors += chunk.length
+    }
+  }
+
+  return {
+    file: file.name,
+    success: totalErrors === 0 || totalInserted > 0,
+    totalInserted,
+    totalErrors,
+    date,
+    chunks: totalChunks,
+    detail: `共 ${dataLines.length} 行，分 ${totalChunks} 批上傳，匯入 ${totalInserted} 筆${totalErrors > 0 ? `，失敗 ${totalErrors} 筆` : ''}`,
+  }
+}
+
 export default function UploadPage() {
   const [files, setFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
-  const [results, setResults] = useState<Array<{ file: string; result: UploadResult }>>([])
+  const [progress, setProgress] = useState<{ current: number; total: number; file: string } | null>(null)
+  const [results, setResults] = useState<FileResult[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -35,26 +95,19 @@ export default function UploadPage() {
     if (!files.length) return
     setUploading(true)
     setResults([])
-    const newResults: Array<{ file: string; result: UploadResult }> = []
+    const newResults: FileResult[] = []
 
-    for (const file of files) {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('source', 'tdcc')
-      try {
-        const res = await fetch(`${API_BASE}/api/upload-csv`, { method: 'POST', body: form })
-        const json: UploadResult = await res.json()
-        newResults.push({ file: file.name, result: json })
-      } catch (e) {
-        newResults.push({ file: file.name, result: { success: false, message: '', error: String(e) } })
-      }
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      setProgress({ current: i + 1, total: files.length, file: file.name })
+      const result = await uploadCsvInChunks(file)
+      newResults.push(result)
+      setResults([...newResults])
     }
 
-    setResults(newResults)
+    setProgress(null)
     setUploading(false)
-    // Clear files that succeeded
-    const failed = new Set(newResults.filter(r => !r.result.success).map(r => r.file))
-    setFiles(prev => prev.filter(f => failed.has(f.name)))
+    setFiles(prev => prev.filter(f => newResults.find(r => r.file === f.name && !r.success)))
   }
 
   return (
@@ -81,7 +134,7 @@ export default function UploadPage() {
         <input ref={inputRef} type="file" accept=".csv" multiple className="hidden" onChange={handleFileChange} />
         <div className="text-4xl mb-3">📂</div>
         <p className="text-slate-600 font-medium">點擊選取 CSV 檔案，或拖曳到此處</p>
-        <p className="text-xs text-slate-400 mt-1">支援多檔案同時上傳（.csv）</p>
+        <p className="text-xs text-slate-400 mt-1">支援多檔案同時上傳（.csv），大檔案自動分批處理</p>
       </div>
 
       {/* File list */}
@@ -96,19 +149,33 @@ export default function UploadPage() {
                 <span className="text-slate-700">{f.name}</span>
                 <div className="flex items-center gap-3">
                   <span className="text-slate-400 text-xs">{(f.size / 1024).toFixed(1)} KB</span>
-                  <button onClick={() => removeFile(f.name)} className="text-slate-400 hover:text-red-500 text-xs">✕</button>
+                  {!uploading && (
+                    <button onClick={() => removeFile(f.name)} className="text-slate-400 hover:text-red-500 text-xs">✕</button>
+                  )}
                 </div>
               </li>
             ))}
           </ul>
           <div className="px-4 py-3 border-t border-surface-border">
-            <button
-              onClick={handleUpload}
-              disabled={uploading}
-              className="w-full py-2 px-4 bg-primary-600 hover:bg-primary-700 disabled:bg-slate-300 text-white text-sm font-medium rounded-lg transition-colors"
-            >
-              {uploading ? '上傳中...' : `上傳 ${files.length} 個檔案`}
-            </button>
+            {progress ? (
+              <div className="text-center text-sm text-slate-600">
+                <div className="mb-1">正在上傳 {progress.file}（{progress.current}/{progress.total}）...</div>
+                <div className="w-full bg-slate-200 rounded-full h-1.5">
+                  <div
+                    className="bg-primary-500 h-1.5 rounded-full transition-all"
+                    style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                  />
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={handleUpload}
+                disabled={uploading}
+                className="w-full py-2 px-4 bg-primary-600 hover:bg-primary-700 disabled:bg-slate-300 text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                上傳 {files.length} 個檔案
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -117,23 +184,16 @@ export default function UploadPage() {
       {results.length > 0 && (
         <div className="space-y-2">
           <h2 className="text-sm font-semibold text-slate-700">上傳結果</h2>
-          {results.map(({ file, result }) => (
-            <div key={file} className={`card p-3 border-l-4 ${result.success ? 'border-green-500 bg-green-50' : 'border-red-500 bg-red-50'}`}>
+          {results.map(r => (
+            <div key={r.file} className={`card p-3 border-l-4 ${r.success ? 'border-green-500 bg-green-50' : 'border-red-500 bg-red-50'}`}>
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-slate-800">{file}</span>
-                <span className={`text-xs font-semibold ${result.success ? 'text-green-700' : 'text-red-700'}`}>
-                  {result.success ? '✓ 成功' : '✗ 失敗'}
+                <span className="text-sm font-medium text-slate-800">{r.file}</span>
+                <span className={`text-xs font-semibold ${r.success ? 'text-green-700' : 'text-red-700'}`}>
+                  {r.success ? '✓ 成功' : '✗ 失敗'}
                 </span>
               </div>
-              <p className="text-xs text-slate-600 mt-1">{result.message || result.error}</p>
-              {result.success && (
-                <div className="flex gap-3 mt-1 text-xs text-slate-500">
-                  {result.date && <span>日期：{result.date}</span>}
-                  {result.inserted !== undefined && <span>匯入：{result.inserted} 筆</span>}
-                  {result.skipped !== undefined && result.skipped > 0 && <span>略過：{result.skipped} 筆</span>}
-                  {result.errors !== undefined && result.errors > 0 && <span className="text-red-600">錯誤：{result.errors} 筆</span>}
-                </div>
-              )}
+              <p className="text-xs text-slate-600 mt-1">{r.detail}</p>
+              {r.date && <p className="text-xs text-slate-400 mt-0.5">日期：{r.date}</p>}
             </div>
           ))}
         </div>
