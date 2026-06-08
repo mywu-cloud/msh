@@ -8,23 +8,19 @@ import { SearchBar } from '@/components/SearchBar'
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.tw-mywu.workers.dev'
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
-interface ApiRow { industry: string; is_etf?: boolean }
-interface ApiResp { data?: ApiRow[] }
+interface IndustriesResp { industries: string[] }
 
 function IndustrySelect({ market, value, onChange }: {
   market: 'twse' | 'tpex'
   value: string
   onChange: (v: string) => void
 }) {
-  const { data } = useSWR<ApiResp>(
-    `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=6`,
+  const { data } = useSWR<IndustriesResp>(
+    `${API_BASE}/api/industries?market=${market}`,
     fetcher,
     { revalidateOnFocus: false }
   )
-  const rows: ApiRow[] = Array.isArray(data) ? data : (data?.data || [])
-  const industries = Array.from(
-    new Set(rows.filter(r => !r.is_etf).map(r => r.industry).filter(Boolean))
-  ).sort() as string[]
+  const industries: string[] = data?.industries || []
   if (industries.length === 0) return null
   return (
     <select
