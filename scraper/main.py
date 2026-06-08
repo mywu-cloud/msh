@@ -478,7 +478,7 @@ class CloudflareD1Writer:
             return
 
         # 每次多行 INSERT，避免超過 D1 SQL 變數限制
-        batch_size = 5  # 每批 5 筆，30 個 SQL 參數
+        batch_size = 100  # 每批 100 筆，加快寫入速度
         total = 0
 
         for i in range(0, len(records), batch_size):
