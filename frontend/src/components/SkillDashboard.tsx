@@ -19,7 +19,7 @@ interface BigHolderRow {
   stock_name: string
   market: string
   industry: string
-  week_changes: Record<string, number>
+  week_changes: Record<string, number | null>
   total_change: number
   latest_change: number
   latest_ratio: number
@@ -61,7 +61,13 @@ function formatDate(d: string): string {
 }
 
 function ChangeCell({ value }: { value: number | null | undefined }) {
-  if (value == null || value === 0) return <td className="text-center text-slate-400 px-2 py-2 text-xs">—</td>
+  // null = no data for this week (not same as 0 change)
+  if (value === null || value === undefined) {
+    return <td className="text-center text-slate-300 px-2 py-2 text-xs">—</td>
+  }
+  if (value === 0) {
+    return <td className="text-center text-slate-400 px-2 py-2 text-xs">0.00</td>
+  }
   const isPos = value > 0
   return (
     <td className={`text-center px-2 py-2 text-xs font-medium ${isPos ? 'text-red-600' : 'text-green-600'}`}>
@@ -213,7 +219,7 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
   const [sortDir, setSortDir] = useState<SortDir>('desc')
 
   const { data, error, isLoading } = useSWR<ApiResponse>(
-    `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=6&include_price=1`,
+    `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=7&include_price=1`,
     fetcher,
     { revalidateOnFocus: false }
   )
