@@ -657,7 +657,7 @@ async function handleTdccCsv(
       : dateStr;
 
   let inserted = 0, skipped = 0, errors = 0;
-  const BATCH = 5;
+  const BATCH = 500;
 
   for (let i = 0; i < dataRows.length; i += BATCH) {
     const batch = dataRows
