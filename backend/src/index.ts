@@ -347,7 +347,7 @@ async function handlePrice(request: Request, env: Env): Promise<Response> {
 
 /**
  * GET /api/industries?market=twse|tpex
- * 回傳指定市場的產業類別清單
+ * 回傳指定市場的產業類別清單（僅一般產業，排除ETF/ETN/受益證券等）
  */
 async function handleIndustries(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -358,13 +358,25 @@ async function handleIndustries(request: Request, env: Env): Promise<Response> {
   if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
 
   try {
-    // Try reading from stock_info view first, fallback to stocks table
-    let sql = "";
-    if (market === "twse") sql = `SELECT DISTINCT industry FROM stock_info WHERE market = 'twse' AND COALESCE(industry,'') != '' ORDER BY industry ASC`;
-    else if (market === "tpex") sql = `SELECT DISTINCT industry FROM stock_info WHERE market = 'tpex' AND COALESCE(industry,'') != '' ORDER BY industry ASC`;
-    else sql = `SELECT DISTINCT industry FROM stock_info WHERE COALESCE(industry,'') != '' ORDER BY industry ASC`;
+    // 排除非一般產業（ETF/ETN/受益證券/大盤/存託憑證/創新板等）
+    const excludeList = [
+      'ETF','ETN','Index','上櫃ETF','上櫃指數股票型基金(ETF)','指數投資證券(ETN)',
+      '受益證券','大盤','存託憑證','創新板股票','所有證券','其他'
+    ];
+    const excludeSQL = excludeList.map(() => "?").join(",");
 
-    const result = await env.DB.prepare(sql).all();
+    let sql: string;
+    const params: string[] = [...excludeList];
+
+    if (market === "twse") {
+      sql = `SELECT DISTINCT industry FROM stock_info WHERE market = 'twse' AND COALESCE(industry,'') != '' AND industry NOT IN (${excludeSQL}) ORDER BY industry ASC`;
+    } else if (market === "tpex") {
+      sql = `SELECT DISTINCT industry FROM stock_info WHERE market = 'tpex' AND COALESCE(industry,'') != '' AND industry NOT IN (${excludeSQL}) ORDER BY industry ASC`;
+    } else {
+      sql = `SELECT DISTINCT industry FROM stock_info WHERE COALESCE(industry,'') != '' AND industry NOT IN (${excludeSQL}) ORDER BY industry ASC`;
+    }
+
+    const result = await env.DB.prepare(sql).bind(...params).all();
     const industries = (result.results || []).map((r: Record<string, unknown>) => r.industry as string).filter(Boolean);
     const responseText = JSON.stringify({ market, industries });
     if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 86400 });
@@ -374,7 +386,6 @@ async function handleIndustries(request: Request, env: Env): Promise<Response> {
     return errorResponse("Query failed", 500);
   }
 }
-
 /**
  * GET or POST /api/sync-industry
  * 從 FinMind 同步股票產業資訊到 D1
