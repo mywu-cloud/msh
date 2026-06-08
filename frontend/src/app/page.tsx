@@ -28,7 +28,7 @@ function IndustrySelect({ market, value, onChange }: {
       onChange={e => onChange(e.target.value)}
       className="text-xs border border-slate-200 rounded px-2 py-1.5 text-slate-600 bg-white hover:border-slate-300 focus:outline-none focus:border-primary-400"
     >
-      <option value="">全部產業</option>
+      <option value="">{market === 'twse' ? '全部上市產業' : '全部上櫃產業'}</option>
       {industries.map(ind => <option key={ind} value={ind}>{ind}</option>)}
     </select>
   )
@@ -40,7 +40,7 @@ export default function HomePage() {
   const [tpexIndustry, setTpexIndustry] = useState('')
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">大股東持有比率週增減排行</h1>
@@ -49,46 +49,51 @@ export default function HomePage() {
         <SearchBar value={searchQuery} onChange={setSearchQuery} placeholder="搜尋股票代號或名稱..." />
       </div>
 
-      {/* 上市 */}
-      <div className="card p-0 overflow-hidden">
-        <div className="border-b border-surface-border px-6 pt-4 pb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <div>
-              <span className="text-base font-semibold text-slate-800">上市</span>
-              <span className="ml-2 text-xs text-slate-400">台灣證交所 TWSE</span>
-            </div>
-            <IndustrySelect market="twse" value={twseIndustry} onChange={setTwseIndustry} />
-          </div>
-          <div className="text-xs text-slate-400">資料來源：集保所 TDCC</div>
-        </div>
-        <SkillDashboard market="twse" searchQuery={searchQuery} industry={twseIndustry} showEtf={false} etfOnly={false} />
-      </div>
+      {/* 三卡片同一列 */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
 
-      {/* 上櫃 */}
-      <div className="card p-0 overflow-hidden">
-        <div className="border-b border-surface-border px-6 pt-4 pb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <div>
-              <span className="text-base font-semibold text-slate-800">上櫃</span>
-              <span className="ml-2 text-xs text-slate-400">台灣櫃買中心 TPEx</span>
+        {/* 上市 */}
+        <div className="card p-0 overflow-hidden">
+          <div className="border-b border-surface-border px-4 pt-3 pb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div>
+                <span className="text-sm font-semibold text-slate-800">上市</span>
+                <span className="ml-1.5 text-xs text-slate-400">TWSE</span>
+              </div>
+              <IndustrySelect market="twse" value={twseIndustry} onChange={setTwseIndustry} />
             </div>
-            <IndustrySelect market="tpex" value={tpexIndustry} onChange={setTpexIndustry} />
+            <span className="text-xs text-slate-400">集保所 TDCC</span>
           </div>
-          <div className="text-xs text-slate-400">資料來源：集保所 TDCC</div>
+          <SkillDashboard market="twse" searchQuery={searchQuery} industry={twseIndustry} showEtf={false} etfOnly={false} />
         </div>
-        <SkillDashboard market="tpex" searchQuery={searchQuery} industry={tpexIndustry} showEtf={false} etfOnly={false} />
-      </div>
 
-      {/* ETF */}
-      <div className="card p-0 overflow-hidden">
-        <div className="border-b border-surface-border px-6 pt-4 pb-3 flex items-center justify-between bg-amber-50">
-          <div className="flex items-center gap-2">
-            <span className="text-base font-semibold text-amber-800">ETF</span>
-            <span className="text-xs text-slate-400">指數型基金</span>
+        {/* 上櫃 */}
+        <div className="card p-0 overflow-hidden">
+          <div className="border-b border-surface-border px-4 pt-3 pb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div>
+                <span className="text-sm font-semibold text-slate-800">上櫃</span>
+                <span className="ml-1.5 text-xs text-slate-400">TPEx</span>
+              </div>
+              <IndustrySelect market="tpex" value={tpexIndustry} onChange={setTpexIndustry} />
+            </div>
+            <span className="text-xs text-slate-400">集保所 TDCC</span>
           </div>
-          <div className="text-xs text-slate-400">資料來源：集保所 TDCC</div>
+          <SkillDashboard market="tpex" searchQuery={searchQuery} industry={tpexIndustry} showEtf={false} etfOnly={false} />
         </div>
-        <SkillDashboard market="twse" searchQuery={searchQuery} industry="" showEtf={true} etfOnly={true} />
+
+        {/* ETF */}
+        <div className="card p-0 overflow-hidden">
+          <div className="border-b border-surface-border px-4 pt-3 pb-2 flex items-center justify-between bg-amber-50">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-amber-800">ETF</span>
+              <span className="text-xs text-slate-400">指數型基金</span>
+            </div>
+            <span className="text-xs text-slate-400">集保所 TDCC</span>
+          </div>
+          <SkillDashboard market="twse" searchQuery={searchQuery} industry="" showEtf={true} etfOnly={true} />
+        </div>
+
       </div>
     </div>
   )
