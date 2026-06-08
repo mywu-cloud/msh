@@ -358,16 +358,12 @@ async function handleIndustries(request: Request, env: Env): Promise<Response> {
   if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
 
   try {
-    let marketFilter = "";
-    if (market === "twse") marketFilter = "WHERE market = 'twse'";
-    else if (market === "tpex") marketFilter = "WHERE market = 'tpex'";
+    // Try reading from stock_info view first, fallback to stocks table
+    let sql = "";
+    if (market === "twse") sql = `SELECT DISTINCT industry FROM stock_info WHERE market = 'twse' AND COALESCE(industry,'') != '' ORDER BY industry ASC`;
+    else if (market === "tpex") sql = `SELECT DISTINCT industry FROM stock_info WHERE market = 'tpex' AND COALESCE(industry,'') != '' ORDER BY industry ASC`;
+    else sql = `SELECT DISTINCT industry FROM stock_info WHERE COALESCE(industry,'') != '' ORDER BY industry ASC`;
 
-    const sql = `
-      SELECT DISTINCT industry FROM stock_info
-      ${marketFilter}
-      AND industry != ''
-      ORDER BY industry ASC
-    `;
     const result = await env.DB.prepare(sql).all();
     const industries = (result.results || []).map((r: Record<string, unknown>) => r.industry as string).filter(Boolean);
     const responseText = JSON.stringify({ market, industries });
@@ -392,13 +388,23 @@ async function handleSyncIndustry(request: Request, env: Env): Promise<Response>
 
     let updated = 0;
     const entries = Array.from(infoMap.entries());
-    const BATCH = 50; // Use larger batches to reduce round trips
+    const BATCH = 50;
+
+    // Try to determine if stock_info is a view or table
+    // Use 'stocks' table (scraper schema) with fallback to stock_info
+    let targetTable = "stocks";
+    try {
+      const check = await env.DB.prepare("SELECT name, type FROM sqlite_master WHERE name='stock_info' AND type='table'").first();
+      if (check) targetTable = "stock_info";
+    } catch {
+      // ignore, use default
+    }
 
     for (let i = 0; i < entries.length; i += BATCH) {
       const batch = entries.slice(i, i + BATCH);
       const stmts = batch.map(([code, info]) =>
         env.DB.prepare(`
-          INSERT INTO stock_info (stock_code, stock_name, market, industry)
+          INSERT INTO ${targetTable} (stock_code, stock_name, market, industry)
           VALUES (?, ?, ?, ?)
           ON CONFLICT(stock_code) DO UPDATE SET
             stock_name = CASE WHEN excluded.stock_name != '' THEN excluded.stock_name ELSE stock_name END,
@@ -418,14 +424,13 @@ async function handleSyncIndustry(request: Request, env: Env): Promise<Response>
       await env.CACHE.delete("industries:");
     }
 
-    return jsonResponse({ success: true, updated, message: `已更新 ${updated} 筆股票資訊` });
+    return jsonResponse({ success: true, updated, table: targetTable, message: `已更新 ${updated} 筆股票資訊 (table: ${targetTable})` });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("handleSyncIndustry error:", err);
     return errorResponse(`Sync failed: ${msg}`, 500);
   }
 }
-
 /**
  * GET /api/distribution/:stockCode
  */
