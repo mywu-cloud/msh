@@ -37,30 +37,44 @@ async function fetchFinMindPrice(
   date: string
 ): Promise<Map<string, { close: number; change: number; change_pct: number }>> {
   const result = new Map<string, { close: number; change: number; change_pct: number }>();
-  try {
-    const url = new URL(FINMIND_API);
-    url.searchParams.set("dataset", "TaiwanStockPrice");
-    url.searchParams.set("start_date", date);
-    url.searchParams.set("token", token);
-    const res = await fetch(url.toString(), { headers: { "User-Agent": "MSH-API/1.0" } });
-    if (!res.ok) return result;
-    const json = (await res.json()) as { status: number; data: Array<{ stock_id: string; close: number; spread: number }> };
-    if (json.status !== 200 || !Array.isArray(json.data)) return result;
-    for (const row of json.data) {
-      if (stockCodes.includes(row.stock_id)) {
-        const change = row.spread ?? 0;
-        const prev = row.close - change;
-        const change_pct = prev !== 0 ? Math.round((change / prev) * 10000) / 100 : 0;
-        result.set(row.stock_id, {
-          close: row.close ?? 0,
-          change: Math.round(change * 100) / 100,
-          change_pct,
-        });
-      }
+  if (!token || stockCodes.length === 0) return result;
+
+  // Limit to first 100 stocks to avoid rate limits
+  const codes = stockCodes.slice(0, 100);
+
+  // Query each stock individually (free tier requires stock_id)
+  const promises = codes.map(async (stockId) => {
+    try {
+      const url = new URL(FINMIND_API);
+      url.searchParams.set("dataset", "TaiwanStockPrice");
+      url.searchParams.set("stock_id", stockId);
+      url.searchParams.set("start_date", date);
+      url.searchParams.set("token", token);
+      const res = await fetch(url.toString(), { headers: { "User-Agent": "MSH-API/1.0" } });
+      if (!res.ok) return;
+      const json = (await res.json()) as { status: number; data: Array<{ stock_id: string; close: number; spread: number; date: string }> };
+      if (json.status !== 200 || !Array.isArray(json.data) || json.data.length === 0) return;
+      // Get the latest date entry
+      const row = json.data[json.data.length - 1];
+      const change = row.spread ?? 0;
+      const prev = row.close - change;
+      const change_pct = prev !== 0 ? Math.round((change / prev) * 10000) / 100 : 0;
+      result.set(stockId, {
+        close: row.close ?? 0,
+        change: Math.round(change * 100) / 100,
+        change_pct,
+      });
+    } catch (e) {
+      // ignore individual errors
     }
-  } catch (e) {
-    console.error("fetchFinMindPrice error:", e);
+  });
+
+  // Run in parallel batches of 10 to avoid overwhelming the API
+  const BATCH = 10;
+  for (let i = 0; i < promises.length; i += BATCH) {
+    await Promise.all(promises.slice(i, i + BATCH));
   }
+
   return result;
 }
 
