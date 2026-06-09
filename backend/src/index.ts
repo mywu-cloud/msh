@@ -345,7 +345,6 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
 
 /**
  * GET /api/price?codes=2330,2317&date=2026-06-05
- */
 async function handlePrice(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const codesParam = url.searchParams.get("codes") || "";
@@ -355,12 +354,31 @@ async function handlePrice(request: Request, env: Env): Promise<Response> {
   if (!env.FINMIND_TOKEN) return errorResponse("FINMIND_TOKEN not configured", 503);
 
   const codes = codesParam.split(",").map(c => c.trim()).filter(Boolean);
-  const priceMap = await fetchFinMindPrice(env.FINMIND_TOKEN, codes, date);
 
+  // Debug: fetch raw FinMind response for first code
+  const debugInfo: Record<string, unknown> = { date, token_prefix: env.FINMIND_TOKEN.slice(0,8) + "...", codes };
+  try {
+    const fmUrl = new URL("https://api.finmindtrade.com/api/v4/data");
+    fmUrl.searchParams.set("dataset", "TaiwanStockPrice");
+    fmUrl.searchParams.set("stock_id", codes[0]);
+    fmUrl.searchParams.set("start_date", date);
+    fmUrl.searchParams.set("token", env.FINMIND_TOKEN);
+    const fmRes = await fetch(fmUrl.toString(), { headers: { "User-Agent": "MSH-API/1.0" } });
+    debugInfo.http_status = fmRes.status;
+    const fmJson = await fmRes.json() as Record<string, unknown>;
+    debugInfo.api_status = fmJson.status;
+    debugInfo.api_msg = fmJson.msg;
+    const rows = fmJson.data as unknown[];
+    debugInfo.row_count = Array.isArray(rows) ? rows.length : 0;
+    if (Array.isArray(rows) && rows.length > 0) debugInfo.first_row = rows[0];
+  } catch (e) {
+    debugInfo.error = e instanceof Error ? e.message : String(e);
+  }
+
+  const priceMap = await fetchFinMindPrice(env.FINMIND_TOKEN, codes, date);
   const data: Record<string, unknown> = {};
   for (const [k, v] of priceMap.entries()) data[k] = v;
-
-  return jsonResponse({ date, data });
+  return jsonResponse({ date, data, debug: debugInfo });
 }
 
 /**
