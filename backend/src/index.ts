@@ -164,6 +164,23 @@ async function handleSkillAnalysis(request: Request, env: Env): Promise<Response
     return errorResponse("Database query failed", 500);
   }
 }
+async function handlePrice(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const codesParam = url.searchParams.get("codes") || "";
+  const date = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
+
+  if (!codesParam) return errorResponse("codes parameter required");
+  if (!env.FINMIND_TOKEN) return errorResponse("FINMIND_TOKEN not configured", 503);
+
+  const codes = codesParam.split(",").map(c => c.trim()).filter(Boolean);
+  const priceMap = await fetchFinMindPrice(env.FINMIND_TOKEN, codes, date);
+
+  const data: Record<string, unknown> = {};
+  for (const [k, v] of priceMap.entries()) data[k] = v;
+
+  return jsonResponse({ date, data });
+}
+
 
 /**
  * GET /api/big-holder-changes
@@ -358,30 +375,7 @@ async function handlePrice(request: Request, env: Env): Promise<Response> {
   const priceMap = await fetchFinMindPrice(env.FINMIND_TOKEN, codes, date);
 
   const data: Record<string, unknown> = {};
-  for (const [k, v] of priceMap.entries()) data[k] = v;
-
-  return jsonResponse({ date, data });
-}
-
-/**
- * GET /api/industries?market=twse|tpex
- * 回傳指定市場的產業類別清單（僅一般產業，排除ETF/ETN/受益證券等）
- */
-async function handleIndustries(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  const market = url.searchParams.get("market") || "";
-
-  const cacheKey = `industries:${market}`;
-  const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
-  if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
-
-  try {
-    // 排除非一般產業（ETF/ETN/受益證券/大盤/存託憑證/創新板等）
-    const excludeList = [
-      'ETF','ETN','Index','上櫃ETF','上櫃指數股票型基金(ETF)','指數投資證券(ETN)',
-      '受益證券','大盤','存託憑證','創新板股票','所有證券','其他'
-    ];
-    const excludeSQL = excludeList.map(() => "?").join(",");
+  for (const [k, v] of priceMap.entries()) d "?").join(",");
 
     let sql: string;
     const params: string[] = [...excludeList];
