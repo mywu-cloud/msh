@@ -50,6 +50,7 @@ async function fetchFinMindPrice(
       url.searchParams.set("stock_id", stockId);
       url.searchParams.set("start_date", date);
       url.searchParams.set("token", token);
+      url.searchParams.set("end_date", date);
       const res = await fetch(url.toString(), { headers: { "User-Agent": "MSH-API/1.0" } });
       if (!res.ok) return;
       const json = (await res.json()) as { status: number; data: Array<{ stock_id: string; close: number; spread: number; date: string }> };
@@ -354,31 +355,12 @@ async function handlePrice(request: Request, env: Env): Promise<Response> {
   if (!env.FINMIND_TOKEN) return errorResponse("FINMIND_TOKEN not configured", 503);
 
   const codes = codesParam.split(",").map(c => c.trim()).filter(Boolean);
-
-  // Debug: fetch raw FinMind response for first code
-  const debugInfo: Record<string, unknown> = { date, token_prefix: env.FINMIND_TOKEN.slice(0,8) + "...", codes };
-  try {
-    const fmUrl = new URL("https://api.finmindtrade.com/api/v4/data");
-    fmUrl.searchParams.set("dataset", "TaiwanStockPrice");
-    fmUrl.searchParams.set("stock_id", codes[0]);
-    fmUrl.searchParams.set("start_date", date);
-    fmUrl.searchParams.set("token", env.FINMIND_TOKEN);
-    const fmRes = await fetch(fmUrl.toString(), { headers: { "User-Agent": "MSH-API/1.0" } });
-    debugInfo.http_status = fmRes.status;
-    const fmJson = await fmRes.json() as Record<string, unknown>;
-    debugInfo.api_status = fmJson.status;
-    debugInfo.api_msg = fmJson.msg;
-    const rows = fmJson.data as unknown[];
-    debugInfo.row_count = Array.isArray(rows) ? rows.length : 0;
-    if (Array.isArray(rows) && rows.length > 0) debugInfo.first_row = rows[0];
-  } catch (e) {
-    debugInfo.error = e instanceof Error ? e.message : String(e);
-  }
-
   const priceMap = await fetchFinMindPrice(env.FINMIND_TOKEN, codes, date);
+
   const data: Record<string, unknown> = {};
   for (const [k, v] of priceMap.entries()) data[k] = v;
-  return jsonResponse({ date, data, debug: debugInfo });
+
+  return jsonResponse({ date, data });
 }
 
 /**
