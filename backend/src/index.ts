@@ -298,7 +298,11 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
     if (includePrice && env.FINMIND_TOKEN) {
       const token = env.FINMIND_TOKEN;
       const stockCodes = topResult.map(r => r.stock_code);
-      priceMap = await fetchFinMindPrice(token, stockCodes, latestDate);
+      // Convert date from YYYYMMDD to YYYY-MM-DD for FinMind API
+      const priceDate = latestDate.length === 8
+        ? `${latestDate.slice(0,4)}-${latestDate.slice(4,6)}-${latestDate.slice(6,8)}`
+        : latestDate;
+      priceMap = await fetchFinMindPrice(token, stockCodes, priceDate);
     }
 
     const finalData = topResult.map(r => ({
@@ -309,7 +313,7 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
     const responseData = {
       meta: {
         market, limit, sort,
-        weeks: weekDates.length,
+        weeks: weepriceDategth,
         week_dates: weekDates,
         count: finalData.length,
         generated_at: new Date().toISOString(),
