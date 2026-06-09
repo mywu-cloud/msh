@@ -355,6 +355,18 @@ async function handlePrice(request: Request, env: Env): Promise<Response> {
   if (!codesParam) return errorResponse("codes parameter required");
   if (!env.FINMIND_TOKEN) return errorResponse("FINMIND_TOKEN not configured", 503);
 
+  // Debug endpoint: ?debug=1 returns raw FinMind response
+  if (url.searchParams.get("debug") === "1") {
+    const testUrl = new URL(FINMIND_API);
+    testUrl.searchParams.set("dataset", "TaiwanStockPrice");
+    testUrl.searchParams.set("stock_id", "2330");
+    testUrl.searchParams.set("start_date", "2025-01-10");
+    testUrl.searchParams.set("end_date", "2025-01-10");
+    testUrl.searchParams.set("token", env.FINMIND_TOKEN);
+    const testRes = await fetch(testUrl.toString());
+    const testJson = await testRes.json() as { status: number; data?: unknown[]; msg?: string };
+    return jsonResponse({ httpStatus: testRes.status, finmindStatus: testJson.status, dataLen: Array.isArray(testJson.data) ? testJson.data.length : 0, msg: testJson.msg });
+  }
   const codes = codesParam.split(",").map(c => c.trim()).filter(Boolean);
   const priceMap = await fetchFinMindPrice(env.FINMIND_TOKEN, codes, date);
 
