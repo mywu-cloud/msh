@@ -313,7 +313,7 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
     const responseData = {
       meta: {
         market, limit, sort,
-        weeks: weepriceDategth,
+        weeks: weekDates.length,
         week_dates: weekDates,
         count: finalData.length,
         generated_at: new Date().toISOString(),
