@@ -178,6 +178,7 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
   const weeks = Math.min(parseInt(url.searchParams.get("weeks") || "6"), 12);
   const includePrice = url.searchParams.get("include_price") === "1";
   const industryFilter = url.searchParams.get("industry") || "";
+  const reqToken = url.searchParams.get("finmind_token") || "";
 
   const cacheKey = `bigholderchanges:${market}:${limit}:${sort}:${weeks}:${includePrice ? "p" : "np"}:${industryFilter}`;
   const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
@@ -310,8 +311,8 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
 
     type PriceInfo = { close: number; change: number; change_pct: number };
     let priceMap = new Map<string, PriceInfo>();
-    if (includePrice && env.FINMIND_TOKEN) {
-      const token = env.FINMIND_TOKEN;
+    if (includePrice && (env.FINMIND_TOKEN || reqToken)) {
+      const token = reqToken || env.FINMIND_TOKEN || "";
       const stockCodes = topResult.map(r => r.stock_code);
       // Convert date from YYYYMMDD to YYYY-MM-DD for FinMind API
       const priceDate = latestDate.length === 8
@@ -353,7 +354,9 @@ async function handlePrice(request: Request, env: Env): Promise<Response> {
   const date = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
 
   if (!codesParam) return errorResponse("codes parameter required");
-  if (!env.FINMIND_TOKEN) return errorResponse("FINMIND_TOKEN not configured", 503);
+  const reqPriceToken = url.searchParams.get("finmind_token") || "";
+  const token = reqPriceToken || env.FINMIND_TOKEN || "";
+  if (!token) return errorResponse("FINMIND_TOKEN not configured", 503);
 
   // Debug endpoint: ?debug=1 returns raw FinMind response
   if (url.searchParams.get("debug") === "1") {
@@ -362,13 +365,13 @@ async function handlePrice(request: Request, env: Env): Promise<Response> {
     testUrl.searchParams.set("stock_id", "2330");
     testUrl.searchParams.set("start_date", "2025-01-10");
     testUrl.searchParams.set("end_date", "2025-01-10");
-    testUrl.searchParams.set("token", env.FINMIND_TOKEN);
+    testUrl.searchParams.set("token", token);
     const testRes = await fetch(testUrl.toString());
     const testJson = await testRes.json() as { status: number; data?: unknown[]; msg?: string };
     return jsonResponse({ httpStatus: testRes.status, finmindStatus: testJson.status, dataLen: Array.isArray(testJson.data) ? testJson.data.length : 0, msg: testJson.msg });
   }
   const codes = codesParam.split(",").map(c => c.trim()).filter(Boolean);
-  const priceMap = await fetchFinMindPrice(env.FINMIND_TOKEN, codes, date);
+  const priceMap = await fetchFinMindPrice(token, codes, date);
 
   const data: Record<string, unknown> = {};
   for (const [k, v] of priceMap.entries()) data[k] = v;
