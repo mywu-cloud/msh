@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import Link from 'next/link'
 import { TrendingUp, TrendingDown, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
@@ -217,9 +217,11 @@ function StockTable({
 export function SkillDashboard({ market, searchQuery, industry = '', showEtf = true, etfOnly = false }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('total_change')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [finmindToken, setFinmindToken] = useState<string>('')
+  useEffect(() => { setFinmindToken(localStorage.getItem('finmind_token') || '') }, [])
 
   const { data, error, isLoading } = useSWR<ApiResponse>(
-    `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=7&include_price=1`,
+    `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=6&include_price=1${finmindToken ? '&finmind_token=' + encodeURIComponent(finmindToken) : ''}`,
     fetcher,
     { revalidateOnFocus: false }
   )
