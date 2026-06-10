@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import { SkillDashboard } from '@/components/SkillDashboard'
 import { SearchBar } from '@/components/SearchBar'
@@ -31,6 +31,29 @@ function IndustrySelect({ market, value, onChange }: {
       <option value="">{market === 'twse' ? '全部上市產業' : '全部上櫃產業'}</option>
       {industries.map(ind => <option key={ind} value={ind}>{ind}</option>)}
     </select>
+  )
+}
+
+function FinMindTokenBar() {
+  const [token, setToken] = useState('')
+  useEffect(() => { setToken(localStorage.getItem('finmind_token') || '') }, [])
+  function save() {
+    localStorage.setItem('finmind_token', token.trim())
+    window.location.reload()
+  }
+  return (
+    <div className="flex items-center gap-2 px-4 py-1.5 bg-slate-50 border-b border-slate-200 text-xs">
+      <span className="text-slate-500 font-medium whitespace-nowrap">FinMind Token:</span>
+      <input
+        type="password"
+        value={token}
+        placeholder="輸入 FinMind Token（可選，提高 API 頻率）"
+        className="flex-1 max-w-xs px-2 py-1 border border-slate-300 rounded text-xs outline-none focus:border-primary-400"
+        onChange={e => setToken(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') save() }}
+      />
+      <button onClick={save} className="px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700">儲存並更新</button>
+    </div>
   )
 }
 
@@ -89,6 +112,7 @@ export default function HomePage() {
           </div>
         </div>
 
+        <FinMindTokenBar />
         {/* Tab 內容 */}
         {activeTab === 'twse' && (
           <SkillDashboard market="twse" searchQuery={searchQuery} industry={twseIndustry} showEtf={false} etfOnly={false} />
