@@ -1,18 +1,26 @@
 name: TDCC Weekly Scraper
+
 on:
   schedule:
-    - cron: '0 8 * * 6'
+    - cron: '0 8 * * 6'  # 每週六 UTC 08:00 = 台灣 16:00
   workflow_dispatch:
     inputs:
       scrape_dates:
         description: '指定日期（逗號分隔 YYYYMMDD，如 20260522,20260515），留空則抓最新週'
         required: false
         default: ''
+
+permissions:
+  contents: write
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -23,9 +31,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
           SCRAPE_DATES: ${{ github.event.inputs.scrape_dates }}
-      - run: |
+      - name: Commit and push data
+        run: |
           git config user.email "action@github.com"
           git config user.name "GitHub Action"
           git add data/ || true
           git diff --staged --quiet || git commit -m "data: TDCC update ${{ github.event.inputs.scrape_dates || 'latest' }}"
           git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
