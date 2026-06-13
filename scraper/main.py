@@ -150,11 +150,8 @@ class TDCCScraper:
         if not all(c in df.columns for c in required):
             log.warning(f"欄位不足: {df.columns.tolist()}")
             return records
-
-        # 轉換日期格式: YYYYMMDD -> YYYY-MM-DD
+        # 保持 YYYYMMDD 格式（與 D1 現有資料一致）
         iso_date = date_str
-        if len(date_str) == 8 and date_str.isdigit():
-            iso_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
 
         for _, row in df.iterrows():
             try:
