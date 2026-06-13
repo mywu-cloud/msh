@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import useSWR from 'swr'
 import Link from 'next/link'
 import { TrendingUp, TrendingDown, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
@@ -61,7 +61,6 @@ function formatDate(d: string): string {
 }
 
 function ChangeCell({ value }: { value: number | null | undefined }) {
-  // null = no data for this week (not same as 0 change)
   if (value === null || value === undefined) {
     return <td className="text-center text-slate-300 px-2 py-2 text-xs">—</td>
   }
@@ -217,11 +216,10 @@ function StockTable({
 export function SkillDashboard({ market, searchQuery, industry = '', showEtf = true, etfOnly = false }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('total_change')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
-  const [finmindToken, setFinmindToken] = useState<string>('')
-  useEffect(() => { setFinmindToken(localStorage.getItem('finmind_token') || '') }, [])
 
+  // No finmind_token from frontend - backend uses FINMIND_TOKEN env var directly
   const { data, error, isLoading } = useSWR<ApiResponse>(
-    `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=6&include_price=1${finmindToken ? '&finmind_token=' + encodeURIComponent(finmindToken) : ''}`,
+    `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=6&include_price=1`,
     fetcher,
     { revalidateOnFocus: false }
   )
@@ -311,4 +309,4 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
       />
     </div>
   )
-}
+      }
