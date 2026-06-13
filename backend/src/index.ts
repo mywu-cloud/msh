@@ -27,84 +27,66 @@ function errorResponse(message: string, status = 400): Response {
   return jsonResponse({ error: message }, status);
 }
 
-// ─── FinMind API Helper ──────────────────────────────────────────────────────
+// ─── TWSE / TPEX Price Fetcher (免費 OpenAPI，無需 Token) ────────────────────
 
-const FINMIND_API = "https://api.finmindtrade.com/api/v4/data";
+const TWSE_PRICE_API = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL";
+const TPEX_PRICE_API = "https://www.tpex.org.tw/openapi/v1/exchangeReport/DAILY_CLOSE_QUOTES";
 
-async function fetchFinMindPrice(
-  token: string,
-  stockCodes: string[],
-  date: string
-): Promise<Map<string, { close: number; change: number; change_pct: number }>> {
-  const result = new Map<string, { close: number; change: number; change_pct: number }>();
-  if (!token || stockCodes.length === 0) return result;
+interface PriceInfo {
+  close: number;
+  change: number;
+  change_pct: number;
+}
 
-  // Limit to first 100 stocks to avoid rate limits
-  const codes = stockCodes.slice(0, 100);
-
-  // Query each stock individually (free tier requires stock_id)
-  const promises = codes.map(async (stockId) => {
-    try {
-      const url = new URL(FINMIND_API);
-      url.searchParams.set("dataset", "TaiwanStockPrice");
-      url.searchParams.set("stock_id", stockId);
-      url.searchParams.set("start_date", date);
-      url.searchParams.set("token", token);
-      url.searchParams.set("end_date", date);
-      const res = await fetch(url.toString(), { headers: { "User-Agent": "MSH-API/1.0" } });
-      if (!res.ok) return;
-      const json = (await res.json()) as { status: number; data: Array<{ stock_id: string; close: number; spread: number; date: string }> };
-      if (json.status !== 200 || !Array.isArray(json.data) || json.data.length === 0) return;
-      // Get the latest date entry
-      const row = json.data[json.data.length - 1];
-      const change = row.spread ?? 0;
-      const prev = row.close - change;
-      const change_pct = prev !== 0 ? Math.round((change / prev) * 10000) / 100 : 0;
-      result.set(stockId, {
-        close: row.close ?? 0,
-        change: Math.round(change * 100) / 100,
-        change_pct,
-      });
-    } catch (e) {
-      // ignore individual errors
+async function fetchTwsePrices(): Promise<Map<string, PriceInfo>> {
+  const result = new Map<string, PriceInfo>();
+  try {
+    const res = await fetch(TWSE_PRICE_API, {
+      headers: { "User-Agent": "MSH-API/2.0" },
+      cf: { cacheTtl: 3600 },
+    });
+    if (!res.ok) return result;
+    const data = await res.json() as Array<{
+      Code: string; ClosingPrice: string; Change: string;
+    }>;
+    for (const row of data) {
+      const close = parseFloat(row.ClosingPrice?.replace(/,/g, "") || "0");
+      const change = parseFloat(row.Change?.replace(/[+,]/g, "") || "0");
+      const prev = close - change;
+      const change_pct = prev > 0 ? Math.round((change / prev) * 10000) / 100 : 0;
+      if (close > 0 && row.Code) {
+        result.set(row.Code.trim(), { close, change: Math.round(change * 100) / 100, change_pct });
+      }
     }
-  });
-
-  // Run in parallel batches of 10 to avoid overwhelming the API
-  const BATCH = 10;
-  for (let i = 0; i < promises.length; i += BATCH) {
-    await Promise.all(promises.slice(i, i + BATCH));
+  } catch (e) {
+    console.error("fetchTwsePrices error:", e);
   }
-
   return result;
 }
 
-async function fetchFinMindIndustry(
-  token: string
-): Promise<Map<string, { industry: string; market: string; name: string }>> {
-  const result = new Map<string, { industry: string; market: string; name: string }>();
+async function fetchTpexPrices(): Promise<Map<string, PriceInfo>> {
+  const result = new Map<string, PriceInfo>();
   try {
-    const url = new URL(FINMIND_API);
-    url.searchParams.set("dataset", "TaiwanStockInfo");
-    url.searchParams.set("token", token);
-    const res = await fetch(url.toString(), { headers: { "User-Agent": "MSH-API/1.0" } });
+    const res = await fetch(TPEX_PRICE_API, {
+      headers: { "User-Agent": "MSH-API/2.0" },
+      cf: { cacheTtl: 3600 },
+    });
     if (!res.ok) return result;
-    const json = (await res.json()) as {
-      status: number;
-      data: Array<{ stock_id: string; industry_category: string; type: string; stock_name: string }>;
-    };
-    if (json.status !== 200 || !Array.isArray(json.data)) return result;
-    for (const row of json.data) {
-      const market = row.type === "twse" || row.type === "上市" ? "twse" :
-        row.type === "tpex" || row.type === "上櫃" ? "tpex" : row.type;
-      result.set(row.stock_id, {
-        industry: row.industry_category || "",
-        market,
-        name: row.stock_name || "",
-      });
+    const data = await res.json() as Array<{
+      SecuritiesCompanyCode: string; Close: string; Change: string;
+    }>;
+    for (const row of data) {
+      const close = parseFloat(row.Close?.replace(/,/g, "") || "0");
+      const change = parseFloat(row.Change?.replace(/[+,]/g, "") || "0");
+      const prev = close - change;
+      const change_pct = prev > 0 ? Math.round((change / prev) * 10000) / 100 : 0;
+      const code = (row.SecuritiesCompanyCode || "").trim();
+      if (close > 0 && code) {
+        result.set(code, { close, change: Math.round(change * 100) / 100, change_pct });
+      }
     }
   } catch (e) {
-    console.error("fetchFinMindIndustry error:", e);
+    console.error("fetchTpexPrices error:", e);
   }
   return result;
 }
@@ -112,63 +94,7 @@ async function fetchFinMindIndustry(
 // ─── Route Handlers ──────────────────────────────────────────────────────────
 
 /**
- * GET /api/skill-analysis
- */
-async function handleSkillAnalysis(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  const market = url.searchParams.get("market") || "all";
-  const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 50);
-  const date = url.searchParams.get("date");
-
-  const cacheKey = `skill:${market}:${limit}:${date || "latest"}`;
-  const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
-  if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
-
-  try {
-    let marketFilter = "";
-    if (market === "twse") {
-      marketFilter = `AND CAST(sa.stock_code AS INTEGER) BETWEEN 1000 AND 9999 AND sa.stock_code NOT LIKE '0%'`;
-    } else if (market === "tpex") {
-      marketFilter = `AND CAST(sa.stock_code AS INTEGER) >= 4000`;
-    }
-    const dateFilter = date
-      ? `AND sa.analysis_date = '${date}'`
-      : `AND sa.analysis_date = (SELECT MAX(analysis_date) FROM skill_analysis)`;
-
-    const sql = `
-      SELECT sa.stock_code, si.stock_name, si.market, si.industry,
-        sa.analysis_date, sa.skill_score, sa.big_holder_ratio,
-        sa.big_holder_trend, sa.retail_trend, sa.holder_change,
-        sa.latest_week_change, sa.alert
-      FROM skill_analysis sa
-      LEFT JOIN stock_info si ON sa.stock_code = si.stock_code
-      WHERE 1=1 ${dateFilter} ${marketFilter}
-      ORDER BY sa.skill_score DESC, sa.alert DESC
-      LIMIT ${limit}
-    `;
-    const result = await env.DB.prepare(sql).all();
-    const responseData = {
-      meta: {
-        market, limit,
-        count: result.results?.length || 0,
-        analysis_date: result.results?.[0]?.analysis_date || null,
-        generated_at: new Date().toISOString(),
-      },
-      data: result.results || [],
-    };
-    const responseText = JSON.stringify(responseData);
-    if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 3600 });
-    return new Response(responseText, { headers: CORS_HEADERS });
-  } catch (err) {
-    console.error("handleSkillAnalysis error:", err);
-    return errorResponse("Database query failed", 500);
-  }
-}
-
-/**
  * GET /api/big-holder-changes
- * 大股東持有比率週增減排行
- * week_changes values: number = actual change, null = no data for that week
  */
 async function handleBigHolderChanges(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -178,9 +104,9 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
   const weeks = Math.min(parseInt(url.searchParams.get("weeks") || "6"), 12);
   const includePrice = url.searchParams.get("include_price") === "1";
   const industryFilter = url.searchParams.get("industry") || "";
-  const reqToken = url.searchParams.get("finmind_token") || "";
 
-  const cacheKey = `bigholderchanges:${market}:${limit}:${sort}:${weeks}:${includePrice ? "p" : "np"}:${industryFilter}`;
+  // Cache key excludes finmind_token since we use TWSE OpenAPI now
+  const cacheKey = `bigholderchanges:v2:${market}:${limit}:${sort}:${weeks}:${includePrice ? "p" : "np"}:${industryFilter}`;
   const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
   if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
 
@@ -202,7 +128,6 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
     const allNeeded = [...new Set([prevDate, ...weekDates])];
     const datesList = allNeeded.map(d => `'${d}'`).join(",");
 
-    // Market filter: use si.market if available, fallback to stock_code pattern
     let marketFilter = "";
     if (market === "twse") {
       marketFilter = `AND (si.market = 'twse' OR (COALESCE(si.market, '') = '' AND hd.stock_code NOT LIKE '0%' AND CAST(hd.stock_code AS INTEGER) BETWEEN 1000 AND 9999))`;
@@ -210,7 +135,6 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
       marketFilter = `AND (si.market = 'tpex' OR (COALESCE(si.market, '') = '' AND (CAST(hd.stock_code AS INTEGER) >= 4000 OR hd.stock_code GLOB '[4-9][0-9][0-9][0-9]')))`;
     }
 
-    // Industry filter
     const indFilter = industryFilter ? `AND si.industry = '${industryFilter.replace(/'/g, "''")}'` : "";
 
     const sql = `
@@ -309,16 +233,19 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
 
     const topResult = result.slice(0, limit);
 
-    type PriceInfo = { close: number; change: number; change_pct: number };
+    // Fetch prices from TWSE/TPEX OpenAPI (free, no token needed)
     let priceMap = new Map<string, PriceInfo>();
-    if (includePrice && (env.FINMIND_TOKEN || reqToken)) {
-      const token = reqToken || env.FINMIND_TOKEN || "";
-      const stockCodes = topResult.map(r => r.stock_code);
-      // Convert date from YYYYMMDD to YYYY-MM-DD for FinMind API
-      const priceDate = latestDate.length === 8
-        ? `${latestDate.slice(0,4)}-${latestDate.slice(4,6)}-${latestDate.slice(6,8)}`
-        : latestDate;
-      priceMap = await fetchFinMindPrice(token, stockCodes, priceDate);
+    if (includePrice) {
+      try {
+        const [twsePrices, tpexPrices] = await Promise.all([
+          fetchTwsePrices(),
+          fetchTpexPrices(),
+        ]);
+        for (const [k, v] of twsePrices) priceMap.set(k, v);
+        for (const [k, v] of tpexPrices) priceMap.set(k, v);
+      } catch (e) {
+        console.error("price fetch error:", e);
+      }
     }
 
     const finalData = topResult.map(r => ({
@@ -346,42 +273,7 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
 }
 
 /**
- * GET /api/price?codes=2330,2317&date=2026-06-05
- */
-async function handlePrice(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  const codesParam = url.searchParams.get("codes") || "";
-  const date = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
-
-  if (!codesParam) return errorResponse("codes parameter required");
-  const reqPriceToken = url.searchParams.get("finmind_token") || "";
-  const token = reqPriceToken || env.FINMIND_TOKEN || "";
-  if (!token) return errorResponse("FINMIND_TOKEN not configured", 503);
-
-  // Debug endpoint: ?debug=1 returns raw FinMind response
-  if (url.searchParams.get("debug") === "1") {
-    const testUrl = new URL(FINMIND_API);
-    testUrl.searchParams.set("dataset", "TaiwanStockPrice");
-    testUrl.searchParams.set("stock_id", "2330");
-    testUrl.searchParams.set("start_date", "2025-01-10");
-    testUrl.searchParams.set("end_date", "2025-01-10");
-    testUrl.searchParams.set("token", token);
-    const testRes = await fetch(testUrl.toString());
-    const testJson = await testRes.json() as { status: number; data?: unknown[]; msg?: string };
-    return jsonResponse({ httpStatus: testRes.status, finmindStatus: testJson.status, dataLen: Array.isArray(testJson.data) ? testJson.data.length : 0, msg: testJson.msg });
-  }
-  const codes = codesParam.split(",").map(c => c.trim()).filter(Boolean);
-  const priceMap = await fetchFinMindPrice(token, codes, date);
-
-  const data: Record<string, unknown> = {};
-  for (const [k, v] of priceMap.entries()) data[k] = v;
-
-  return jsonResponse({ date, data });
-}
-
-/**
  * GET /api/industries?market=twse|tpex
- * 回傳指定市場的產業類別清單（僅一般產業，排除ETF/ETN/受益證券等）
  */
 async function handleIndustries(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -392,7 +284,6 @@ async function handleIndustries(request: Request, env: Env): Promise<Response> {
   if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
 
   try {
-    // 排除非一般產業（ETF/ETN/受益證券/大盤/存託憑證/創新板等）
     const excludeList = [
       'ETF','ETN','Index','上櫃ETF','上櫃指數股票型基金(ETF)','指數投資證券(ETN)',
       '受益證券','大盤','存託憑證','創新板股票','所有證券','其他'
@@ -420,62 +311,26 @@ async function handleIndustries(request: Request, env: Env): Promise<Response> {
     return errorResponse("Query failed", 500);
   }
 }
+
 /**
- * GET or POST /api/sync-industry
- * 從 FinMind 同步股票產業資訊到 D1
+ * GET /api/stats
  */
-async function handleSyncIndustry(request: Request, env: Env): Promise<Response> {
-  if (!env.FINMIND_TOKEN) return errorResponse("FINMIND_TOKEN not configured", 503);
-
+async function handleStats(env: Env): Promise<Response> {
   try {
-    const infoMap = await fetchFinMindIndustry(env.FINMIND_TOKEN);
-    if (!infoMap.size) return errorResponse("No data from FinMind", 502);
-
-    let updated = 0;
-    const entries = Array.from(infoMap.entries());
-    const BATCH = 50;
-
-    // Try to determine if stock_info is a view or table
-    // Use 'stocks' table (scraper schema) with fallback to stock_info
-    let targetTable = "stocks";
-    try {
-      const check = await env.DB.prepare("SELECT name, type FROM sqlite_master WHERE name='stock_info' AND type='table'").first();
-      if (check) targetTable = "stock_info";
-    } catch {
-      // ignore, use default
-    }
-
-    for (let i = 0; i < entries.length; i += BATCH) {
-      const batch = entries.slice(i, i + BATCH);
-      const stmts = batch.map(([code, info]) =>
-        env.DB.prepare(`
-          INSERT INTO ${targetTable} (stock_code, stock_name, market, industry)
-          VALUES (?, ?, ?, ?)
-          ON CONFLICT(stock_code) DO UPDATE SET
-            stock_name = CASE WHEN excluded.stock_name != '' THEN excluded.stock_name ELSE stock_name END,
-            market = CASE WHEN excluded.market != '' THEN excluded.market ELSE market END,
-            industry = CASE WHEN excluded.industry != '' THEN excluded.industry ELSE industry END,
-            updated_at = datetime('now')
-        `).bind(code, info.name, info.market, info.industry)
-      );
-      await env.DB.batch(stmts);
-      updated += batch.length;
-    }
-
-    // Invalidate cached industries
-    if (env.CACHE) {
-      await env.CACHE.delete("industries:twse");
-      await env.CACHE.delete("industries:tpex");
-      await env.CACHE.delete("industries:");
-    }
-
-    return jsonResponse({ success: true, updated, table: targetTable, message: `已更新 ${updated} 筆股票資訊 (table: ${targetTable})` });
+    const sql = `
+      SELECT
+        (SELECT COUNT(DISTINCT stock_code) FROM holder_distribution) as total_stocks,
+        (SELECT COUNT(DISTINCT date) FROM holder_distribution) as total_weeks,
+        (SELECT MAX(date) FROM holder_distribution) as latest_date,
+        (SELECT MIN(date) FROM holder_distribution) as earliest_date
+    `;
+    const result = await env.DB.prepare(sql).first();
+    return jsonResponse({ data: result });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("handleSyncIndustry error:", err);
-    return errorResponse(`Sync failed: ${msg}`, 500);
+    return errorResponse("Stats query failed", 500);
   }
 }
+
 /**
  * GET /api/distribution/:stockCode
  */
@@ -492,10 +347,10 @@ async function handleDistribution(request: Request, env: Env, stockCode: string)
       FROM holder_distribution hd
       LEFT JOIN stock_info si ON hd.stock_code = si.stock_code
       WHERE hd.stock_code = ?
-        AND hd.date IN (
-          SELECT DISTINCT date FROM holder_distribution
-          WHERE stock_code = ? ORDER BY date DESC LIMIT 12
-        )
+      AND hd.date IN (
+        SELECT DISTINCT date FROM holder_distribution
+        WHERE stock_code = ? ORDER BY date DESC LIMIT 12
+      )
       ORDER BY hd.date DESC, hd.bracket ASC
     `;
     const result = await env.DB.prepare(sql).bind(stockCode, stockCode).all();
@@ -529,37 +384,89 @@ async function handleTopChanges(request: Request, env: Env): Promise<Response> {
   const type = url.searchParams.get("type") || "increase";
   const market = url.searchParams.get("market") || "all";
   const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 50);
+  const weeks = Math.min(parseInt(url.searchParams.get("weeks") || "1"), 4);
 
-  const cacheKey = `topchanges:${type}:${market}:${limit}`;
+  const cacheKey = `topchanges:v2:${type}:${market}:${limit}`;
   const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
   if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
 
   try {
-    const orderDir = type === "increase" ? "DESC" : "ASC";
+    // Use big-holder-changes logic to get top changes
+    const datesResult = await env.DB.prepare(`
+      SELECT DISTINCT date FROM holder_distribution
+      ORDER BY date DESC LIMIT 3
+    `).all();
+
+    const allDates = (datesResult.results || []).map(
+      (r: Record<string, unknown>) => r.date as string
+    ).sort();
+
+    if (allDates.length < 2) {
+      return jsonResponse({ meta: { type, market, limit, count: 0 }, data: [] });
+    }
+
+    const latestDate = allDates[allDates.length - 1];
+    const prevDate = allDates[allDates.length - 2];
+
     let marketFilter = "";
-    if (market === "twse") marketFilter = `AND si.market = 'twse'`;
-    else if (market === "tpex") marketFilter = `AND si.market = 'tpex'`;
+    if (market === "twse") {
+      marketFilter = `AND (si.market = 'twse' OR (COALESCE(si.market, '') = '' AND hd.stock_code NOT LIKE '0%' AND CAST(hd.stock_code AS INTEGER) BETWEEN 1000 AND 9999))`;
+    } else if (market === "tpex") {
+      marketFilter = `AND (si.market = 'tpex' OR (COALESCE(si.market, '') = '' AND CAST(hd.stock_code AS INTEGER) >= 4000))`;
+    }
 
     const sql = `
-      SELECT sa.stock_code, si.stock_name, si.market,
-        sa.big_holder_trend, sa.latest_week_change,
-        sa.skill_score, sa.alert, sa.analysis_date
-      FROM skill_analysis sa
-      LEFT JOIN stock_info si ON sa.stock_code = si.stock_code
-      WHERE sa.analysis_date = (SELECT MAX(analysis_date) FROM skill_analysis)
+      SELECT
+        hd.stock_code,
+        si.stock_name,
+        si.market,
+        si.industry,
+        hd.date,
+        SUM(CASE WHEN CAST(hd.bracket AS INTEGER) >= 10 AND CAST(hd.bracket AS INTEGER) != 17 THEN hd.ratio ELSE 0 END) as big_holder_ratio
+      FROM holder_distribution hd
+      LEFT JOIN stock_info si ON hd.stock_code = si.stock_code
+      WHERE hd.date IN ('${latestDate}', '${prevDate}')
       ${marketFilter}
-      ORDER BY sa.latest_week_change ${orderDir}
-      LIMIT ${limit}
+      GROUP BY hd.stock_code, hd.date
+      ORDER BY hd.stock_code, hd.date ASC
     `;
-    const result = await env.DB.prepare(sql).all();
+
+    const rawResult = await env.DB.prepare(sql).all();
+    const byStock = new Map<string, { info: Record<string, string>; prev: number; curr: number }>();
+
+    for (const r of rawResult.results || []) {
+      const row = r as { stock_code: string; stock_name: string; market: string; industry: string; date: string; big_holder_ratio: number };
+      if (!byStock.has(row.stock_code)) {
+        byStock.set(row.stock_code, { info: { stock_name: row.stock_name || "", market: row.market || "", industry: row.industry || "" }, prev: 0, curr: 0 });
+      }
+      const entry = byStock.get(row.stock_code)!;
+      if (row.date === prevDate) entry.prev = row.big_holder_ratio || 0;
+      else if (row.date === latestDate) entry.curr = row.big_holder_ratio || 0;
+    }
+
+    const changes = [];
+    for (const [code, entry] of byStock) {
+      if (entry.curr === 0) continue;
+      const change = Math.round((entry.curr - entry.prev) * 100) / 100;
+      changes.push({ stock_code: code, ...entry.info, latest_week_change: change, latest_ratio: entry.curr, analysis_date: latestDate });
+    }
+
+    if (type === "increase") {
+      changes.sort((a, b) => b.latest_week_change - a.latest_week_change);
+    } else {
+      changes.sort((a, b) => a.latest_week_change - b.latest_week_change);
+    }
+
+    const topData = changes.slice(0, limit);
     const responseData = {
-      meta: { type, market, limit, count: result.results?.length || 0 },
-      data: result.results || [],
+      meta: { type, market, limit, count: topData.length },
+      data: topData,
     };
     const responseText = JSON.stringify(responseData);
     if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 3600 });
     return new Response(responseText, { headers: CORS_HEADERS });
   } catch (err) {
+    console.error("handleTopChanges error:", err);
     return errorResponse("Database query failed", 500);
   }
 }
@@ -587,29 +494,8 @@ async function handleSearch(request: Request, env: Env): Promise<Response> {
 }
 
 /**
- * GET /api/stats
+ * POST /api/upload-csv
  */
-async function handleStats(env: Env): Promise<Response> {
-  try {
-    const sql = `
-      SELECT
-        (SELECT COUNT(DISTINCT stock_code) FROM holder_distribution) as total_stocks,
-        (SELECT COUNT(DISTINCT date) FROM holder_distribution) as total_weeks,
-        (SELECT MAX(date) FROM holder_distribution) as latest_date,
-        (SELECT MIN(date) FROM holder_distribution) as earliest_date,
-        (SELECT COUNT(*) FROM skill_analysis
-          WHERE analysis_date = (SELECT MAX(analysis_date) FROM skill_analysis)
-          AND alert = 1) as alert_count
-    `;
-    const result = await env.DB.prepare(sql).first();
-    return jsonResponse({ data: result });
-  } catch (err) {
-    return errorResponse("Stats query failed", 500);
-  }
-}
-
-// ─── CSV Upload ──────────────────────────────────────────────────────────────
-
 async function handleUploadCsv(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") return jsonResponse({ error: "Method Not Allowed" }, 405);
 
@@ -622,7 +508,7 @@ async function handleUploadCsv(request: Request, env: Env): Promise<Response> {
     return jsonResponse({ error: "請以 multipart/form-data 上傳 CSV" }, 400);
   }
 
-  let csvText = "", dateParam = "", sourceHint = "";
+  let csvText = "", dateParam = "";
 
   if (contentType.includes("multipart/form-data")) {
     const formData = await request.formData();
@@ -632,12 +518,10 @@ async function handleUploadCsv(request: Request, env: Env): Promise<Response> {
     }
     csvText = await (file as File).text();
     dateParam = (formData.get("date") as string) || "";
-    sourceHint = ((formData.get("source") as string) || "").toLowerCase();
   } else {
     csvText = await request.text();
     const url = new URL(request.url);
     dateParam = url.searchParams.get("date") || "";
-    sourceHint = (url.searchParams.get("source") || "").toLowerCase();
   }
 
   if (!csvText.trim()) return jsonResponse({ error: "CSV 內容為空" }, 400);
@@ -656,17 +540,11 @@ async function handleTdccCsv(
 ): Promise<Response> {
   const rows = lines.map(l => l.split(",").map(c => c.trim().replace(/^"|"$/g, "")));
 
-  // Detect if first row is a header
-  // TDCC header example: 證券代號,持股/單位數分級,人數,股數/單位數,佔集保庫存數比例%
-  // TDCC data row example: 0050,1-999,62736,12168163,0.23
   const firstCell = (firstCells[0] || "").trim();
   const isHeader = !/^[0-9A-Za-z]{3,8}$/.test(firstCell);
   const dataRows = isHeader ? rows.slice(1) : rows;
   const header = isHeader ? rows[0].map(h => h.toLowerCase()) : [];
 
-  // Column indices
-  // TDCC 5-col format (no date): [stock_code, bracket, holders, shares, ratio]
-  // TDCC 6-col format (with date): [date, stock_code, bracket, holders, shares, ratio]
   let dateCol = -1, stockCol = 0, bracketCol = 1, holdersCol = 2, sharesCol = 3, ratioCol = 4;
 
   if (isHeader) {
@@ -685,11 +563,9 @@ async function handleTdccCsv(
     if (sh >= 0) sharesCol = sh;
     if (r >= 0) ratioCol = r;
   } else if (/^\d{8}$/.test(firstCell)) {
-    // No header but first cell is 8-digit date
     dateCol = 0; stockCol = 1; bracketCol = 2; holdersCol = 3; sharesCol = 4; ratioCol = 5;
   }
 
-  // Resolve the ISO date to use
   let isoDate = dateParam;
   if (isoDate && isoDate.length === 8 && /^\d{8}$/.test(isoDate)) {
     isoDate = `${isoDate.slice(0,4)}-${isoDate.slice(4,6)}-${isoDate.slice(6,8)}`;
@@ -703,7 +579,7 @@ async function handleTdccCsv(
 
   let inserted = 0, skipped = 0, errors = 0;
   let firstError = "";
-  const BATCH = 100; // D1 limit: 999 params; 100*6=600
+  const BATCH = 100;
 
   for (let i = 0; i < dataRows.length; i += BATCH) {
     const batch = dataRows.slice(i, i + BATCH);
@@ -739,9 +615,9 @@ async function handleTdccCsv(
       INSERT INTO holder_distribution (stock_code, date, bracket, holders, shares, ratio)
       VALUES ${placeholders}
       ON CONFLICT(stock_code, date, bracket) DO UPDATE SET
-        holders = excluded.holders,
-        shares = excluded.shares,
-        ratio = excluded.ratio
+      holders = excluded.holders,
+      shares = excluded.shares,
+      ratio = excluded.ratio
     `;
     try {
       const result = await env.DB.prepare(sql).bind(...params).run();
@@ -752,37 +628,11 @@ async function handleTdccCsv(
     }
   }
 
-  // Background sync of stock_info if FinMind token available
-  if (env.FINMIND_TOKEN) {
-    try {
-      const newCodes = [...new Set(dataRows
-        .map(r => (r[stockCol] || "").replace(/\s/g, "").substring(0, 6))
-        .filter(c => /^[0-9A-Za-z]{3,8}$/.test(c)))];
-      if (newCodes.length > 0) {
-        const existing = await env.DB.prepare(
-          `SELECT stock_code FROM stock_info WHERE stock_code IN (${newCodes.map(() => "?").join(",")}) AND industry != ''`
-        ).bind(...newCodes).all();
-        const existingSet = new Set((existing.results || []).map((r: Record<string, unknown>) => r.stock_code as string));
-        const missing = newCodes.filter(c => !existingSet.has(c));
-        if (missing.length > 0) {
-          fetchFinMindIndustry(env.FINMIND_TOKEN).then(async (infoMap) => {
-            const stmts = missing.filter(c => infoMap.has(c)).map(c => {
-              const info = infoMap.get(c)!;
-              return env.DB.prepare(`
-                INSERT INTO stock_info (stock_code, stock_name, market, industry)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(stock_code) DO UPDATE SET
-                  stock_name = CASE WHEN excluded.stock_name != '' THEN excluded.stock_name ELSE stock_name END,
-                  market = CASE WHEN excluded.market != '' THEN excluded.market ELSE market END,
-                  industry = CASE WHEN excluded.industry != '' THEN excluded.industry ELSE industry END,
-                  updated_at = datetime('now')
-              `).bind(c, info.name, info.market, info.industry);
-            });
-            if (stmts.length) await env.DB.batch(stmts);
-          }).catch(console.error);
-        }
-      }
-    } catch (e) { console.error("background sync error:", e); }
+  // Invalidate caches
+  if (env.CACHE) {
+    await env.CACHE.delete(`bigholderchanges:v2:twse:5000:total_change:6:p:`);
+    await env.CACHE.delete(`bigholderchanges:v2:tpex:5000:total_change:6:p:`);
+    await env.CACHE.delete(`bigholderchanges:v2:all:5000:total_change:6:p:`);
   }
 
   return jsonResponse({
@@ -796,7 +646,6 @@ async function handleTdccCsv(
   });
 }
 
-
 // ─── Main Router ─────────────────────────────────────────────────────────────
 
 export default {
@@ -806,8 +655,6 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    if (path === "/api/skill-analysis" || path === "/api/skill-analysis/")
-      return handleSkillAnalysis(request, env);
     if (path === "/api/big-holder-changes" || path === "/api/big-holder-changes/")
       return handleBigHolderChanges(request, env);
     if (path === "/api/top-changes" || path === "/api/top-changes/")
@@ -818,10 +665,6 @@ export default {
       return handleStats(env);
     if (path === "/api/upload-csv" || path === "/api/upload-csv/")
       return handleUploadCsv(request, env);
-    if (path === "/api/price" || path === "/api/price/")
-      return handlePrice(request, env);
-    if (path === "/api/sync-industry" || path === "/api/sync-industry/")
-      return handleSyncIndustry(request, env);
     if (path === "/api/industries" || path === "/api/industries/")
       return handleIndustries(request, env);
 
@@ -831,19 +674,16 @@ export default {
     if (path === "/" || path === "/api") {
       return jsonResponse({
         service: "MSH API",
-        version: "1.3.0",
+        version: "2.0.0",
         description: "股權分散表大股東籌碼分析 API",
         endpoints: [
-          "GET /api/skill-analysis?market=twse|tpex|all&limit=20",
           "GET /api/big-holder-changes?market=all&limit=5000&sort=total_change&weeks=6&include_price=1&industry=",
           "GET /api/distribution/:stockCode",
           "GET /api/top-changes?type=increase|decrease&market=all&limit=20",
           "GET /api/search?q=keyword",
           "GET /api/stats",
-          "GET /api/price?codes=2330,2317&date=2026-06-05",
           "GET /api/industries?market=twse|tpex",
-          "POST /api/upload-csv (multipart/form-data: file, source=tdcc, date?)",
-          "GET|POST /api/sync-industry (sync stock info from FinMind)",
+          "POST /api/upload-csv (multipart/form-data: file, date?)",
         ],
       });
     }
