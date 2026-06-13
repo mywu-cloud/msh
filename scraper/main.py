@@ -248,8 +248,8 @@ class CloudflareD1Writer:
         if not records:
             return
 
-        # D1 每筆 SQL 最多 99 個 params; 每筆 INSERT 6 params, 所以每批最多 15 筆
-        BATCH_SIZE = 15
+                # 使用 D1 batch API，每批最多 100 筆（每個 INSERT 獨立 statement，無 too-many-variables 問題）
+                BATCH_SIZE = 100
         total_inserted = 0
         total_failed = 0
 
@@ -302,7 +302,7 @@ class CloudflareD1Writer:
         """批量寫入/更新股票基本資料到 stock_info 表。"""
         if not stocks:
             return
-        BATCH_SIZE = 15
+                BATCH_SIZE = 100
         total = 0
         for i in range(0, len(stocks), BATCH_SIZE):
             batch = stocks[i:i + BATCH_SIZE]
