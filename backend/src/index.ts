@@ -567,15 +567,12 @@ async function handleTdccCsv(
   }
 
   let isoDate = dateParam;
-  if (isoDate && isoDate.length === 8 && /^\d{8}$/.test(isoDate)) {
-    isoDate = `${isoDate.slice(0,4)}-${isoDate.slice(4,6)}-${isoDate.slice(6,8)}`;
-  }
   if (!isoDate && dataRows.length > 0 && dateCol >= 0) {
     const v = (dataRows[0][dateCol] || "").trim();
-    if (/^\d{8}$/.test(v)) isoDate = `${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`;
+      if (/^\d{8}$/.test(v)) isoDate = v;
     else if (/^\d{4}-\d{2}-\d{2}$/.test(v)) isoDate = v;
   }
-  if (!isoDate) isoDate = new Date().toISOString().slice(0, 10);
+  if (!isoDate) isoDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
   let inserted = 0, skipped = 0, errors = 0;
   let firstError = "";
@@ -596,7 +593,7 @@ async function handleTdccCsv(
       let rowDate = isoDate;
       if (dateCol >= 0 && row[dateCol]) {
         const raw = row[dateCol].trim();
-        if (/^\d{8}$/.test(raw)) rowDate = `${raw.slice(0,4)}-${raw.slice(4,6)}-${raw.slice(6,8)}`;
+          if (/^\d{8}$/.test(raw)) rowDate = raw;
         else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) rowDate = raw;
       }
 
