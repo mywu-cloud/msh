@@ -121,7 +121,7 @@ class WorkerUploader:
                 log.error(f"Worker HTTP {resp.status_code}: {resp.text[:300]}")
                 return False
             result = resp.json()
-            log.info(f"Worker 結果: {json.dumps(result, ensure_ascii=False)}")
+            log.info(f"Worker 結果: {result.get('message', result)}")
             return result.get('success', False) or result.get('inserted', 0) > 0
         except Exception as e:
             log.error(f"upload_csv error: {e}")
@@ -200,18 +200,6 @@ def main():
 
     d1_available = CF_ACCOUNT_ID and CF_API_TOKEN and CF_D1_DB_ID
     d1 = CloudflareD1Writer() if d1_available else None
-
-    # DEBUG: Query D1 schema to find actual table names
-    if d1_available:
-        try:
-            url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/d1/database/{CF_D1_DB_ID}/query"
-            headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}
-            r = requests.post(url, headers=headers, json={"sql": "SELECT type, name, sql FROM sqlite_master ORDER BY type, name"}, timeout=30)
-            schema_data = r.json()
-            for row in (schema_data.get("result", [{}])[0].get("results", []))[:20]:
-                log.info(f"SCHEMA: {row.get('type')} | {row.get('name')} | {str(row.get('sql',''))[:80]}")
-        except Exception as e:
-            log.error(f"Schema query error: {e}")
 
     dates = tdcc.fetch_available_dates()
     if not dates:
