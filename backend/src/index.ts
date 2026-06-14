@@ -575,6 +575,11 @@ async function handleTdccCsv(
   if (!isoDate) isoDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
   let inserted = 0, skipped = 0, errors = 0;
+
+  // Delete existing data for this date to ensure clean update
+  try {
+    await env.DB.prepare("DELETE FROM distributions WHERE date = ?").bind(isoDate).run();
+  } catch(e) { console.error("DELETE error:", e); }
   let firstError = "";
   const BATCH = 100;
 
@@ -611,10 +616,6 @@ async function handleTdccCsv(
     const sql = `
       INSERT INTO distributions (stock_code, date, bracket, holders, shares, ratio)
       VALUES ${placeholders}
-      ON CONFLICT(stock_code, date, bracket) DO UPDATE SET
-      holders = excluded.holders,
-      shares = excluded.shares,
-      ratio = excluded.ratio
     `;
     try {
       const result = await env.DB.prepare(sql).bind(...params).run();
