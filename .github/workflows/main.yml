@@ -37,7 +37,7 @@ jobs:
           git config user.name "GitHub Action"
           git add data/ || true
           git diff --staged --quiet || git commit -m "data: TDCC update ${{ github.event.inputs.scrape_dates || 'latest' }}"
-        git pull --rebase
-        git push
+          git pull --rebase
+          git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
