@@ -581,7 +581,7 @@ async function handleTdccCsv(
     await env.DB.prepare("DELETE FROM distributions WHERE date = ?").bind(isoDate).run();
   } catch(e) { console.error("DELETE error:", e); }
   let firstError = "";
-  const BATCH = 100;
+  const BATCH = 50;
 
   for (let i = 0; i < dataRows.length; i += BATCH) {
     const batch = dataRows.slice(i, i + BATCH);
