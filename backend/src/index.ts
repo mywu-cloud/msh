@@ -646,22 +646,6 @@ async function handleTdccCsv(
 // ─── Main Router ─────────────────────────────────────────────────────────────
 
 export default {
-
-/**
- * GET /api/debug/schema
- */
-async function handleDebugSchema(env: Env): Promise<Response> {
-  try {
-    const result = await env.DB.prepare(
-      "SELECT type, name, sql FROM sqlite_master ORDER BY type, name"
-    ).all();
-    return jsonResponse({ schema: result.results });
-  } catch (err) {
-    return errorResponse("Schema query failed", 500);
-  }
-}
-
-
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
 
@@ -680,8 +664,6 @@ async function handleDebugSchema(env: Env): Promise<Response> {
       return handleUploadCsv(request, env);
     if (path === "/api/industries" || path === "/api/industries/")
       return handleIndustries(request, env);
-    if (path === "/api/debug/schema")
-      return handleDebugSchema(env);
 
     const distMatch = path.match(/^\/api\/distribution\/([A-Z0-9]+)$/i);
     if (distMatch) return handleDistribution(request, env, distMatch[1].toUpperCase());
