@@ -609,7 +609,7 @@ async function handleTdccCsv(
     const cnt = params.length / 6;
     const placeholders = Array(cnt).fill("(?,?,?,?,?,?)").join(",");
     const sql = `
-      INSERT INTO holder_distribution (stock_code, date, bracket, holders, shares, ratio)
+      INSERT INTO distributions (stock_code, date, bracket, holders, shares, ratio)
       VALUES ${placeholders}
       ON CONFLICT(stock_code, date, bracket) DO UPDATE SET
       holders = excluded.holders,
