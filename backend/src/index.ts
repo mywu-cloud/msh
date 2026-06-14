@@ -581,52 +581,51 @@ async function handleTdccCsv(
     await env.DB.prepare("DELETE FROM distributions WHERE date = ?").bind(isoDate).run();
   } catch(e) { console.error("DELETE error:", e); }
   let firstError = "";
-  const BATCH = 50;
+  const BATCH = 100;
 
-  for (let i = 0; i < dataRows.length; i += BATCH) {
-    const batch = dataRows.slice(i, i + BATCH);
-    if (!batch.length) continue;
+for (let i = 0; i < dataRows.length; i += BATCH) {
+  const batch = dataRows.slice(i, i + BATCH);
+  if (!batch.length) continue;
 
-    const params: (string | number)[] = [];
-    for (const row of batch) {
-      const minCols = Math.max(stockCol, bracketCol, holdersCol, sharesCol, ratioCol) + 1;
-      if (row.length < minCols) { skipped++; continue; }
+  const stmts: D1PreparedStatement[] = [];
+  let batchSkipped = 0;
+  for (const row of batch) {
+    const minCols = Math.max(stockCol, bracketCol, holdersCol, sharesCol, ratioCol) + 1;
+    if (row.length < minCols) { skipped++; batchSkipped++; continue; }
 
-      const code = (row[stockCol] || "").replace(/\s/g, "").substring(0, 10);
-      if (!code || !/^[0-9A-Za-z]{3,8}$/.test(code)) { skipped++; continue; }
+    const code = (row[stockCol] || "").replace(/\s/g, "").substring(0, 10);
+    if (!code || !/^[0-9A-Za-z]{3,8}$/.test(code)) { skipped++; batchSkipped++; continue; }
 
-      let rowDate = isoDate;
-      if (dateCol >= 0 && row[dateCol]) {
-        const raw = row[dateCol].trim();
-          if (/^\d{8}$/.test(raw)) rowDate = raw;
-        else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) rowDate = raw;
-      }
-
-      const bracket = (row[bracketCol] || "").substring(0, 50);
-      const holders = parseInt((row[holdersCol] || "0").replace(/,/g, "")) || 0;
-      const shares = parseInt((row[sharesCol] || "0").replace(/,/g, "")) || 0;
-      const ratio = parseFloat((row[ratioCol] || "0").replace(/,/g, "")) || 0;
-
-      params.push(code, rowDate, bracket, holders, shares, ratio);
+    let rowDate = isoDate;
+    if (dateCol >= 0 && row[dateCol]) {
+      const raw = row[dateCol].trim();
+      if (/^\d{8}$/.test(raw)) rowDate = raw;
+      else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) rowDate = raw;
     }
-    if (!params.length) continue;
 
-    const cnt = params.length / 6;
-    const placeholders = Array(cnt).fill("(?,?,?,?,?,?)").join(",");
-    const sql = `
-      INSERT INTO distributions (stock_code, date, bracket, holders, shares, ratio)
-      VALUES ${placeholders}
-    `;
-    try {
-      const result = await env.DB.prepare(sql).bind(...params).run();
-      if (result.success) inserted += cnt; else errors += cnt;
-    } catch(e) {
-      if (!firstError) firstError = e instanceof Error ? e.message : String(e);
-      errors += cnt;
-    }
+    const bracket = (row[bracketCol] || "").substring(0, 50);
+    const holders = parseInt((row[holdersCol] || "0").replace(/,/g, "")) || 0;
+    const shares = parseInt((row[sharesCol] || "0").replace(/,/g, "")) || 0;
+    const ratio = parseFloat((row[ratioCol] || "0").replace(/,/g, "")) || 0;
+
+    stmts.push(
+      env.DB.prepare("INSERT INTO distributions (stock_code, date, bracket, holders, shares, ratio) VALUES (?,?,?,?,?,?)")
+        .bind(code, rowDate, bracket, holders, shares, ratio)
+    );
   }
+  if (!stmts.length) continue;
+  try {
+    const results = await env.DB.batch(stmts);
+    const ok = results.filter(r => r.success).length;
+    inserted += ok;
+    errors += stmts.length - ok;
+  } catch(e) {
+    if (!firstError) firstError = e instanceof Error ? e.message : String(e);
+    errors += stmts.length;
+  }
+}
 
-  // Invalidate caches
+// Invalidate caches
   if (env.CACHE) {
     await env.CACHE.delete(`bigholderchanges:v2:twse:5000:total_change:6:p:`);
     await env.CACHE.delete(`bigholderchanges:v2:tpex:5000:total_change:6:p:`);
