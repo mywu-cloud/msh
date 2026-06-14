@@ -121,7 +121,7 @@ class WorkerUploader:
                 log.error(f"Worker HTTP {resp.status_code}: {resp.text[:300]}")
                 return False
             result = resp.json()
-            log.info(f"Worker 結果: {result.get('message', result)}")
+            log.info(f"Worker 結果: {json.dumps(result, ensure_ascii=False)}")
             return result.get('success', False) or result.get('inserted', 0) > 0
         except Exception as e:
             log.error(f"upload_csv error: {e}")
