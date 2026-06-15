@@ -42,8 +42,8 @@ async function fetchTwsePrices(): Promise<Map<string, PriceInfo>> {
   const result = new Map<string, PriceInfo>();
   try {
     const res = await fetch(TWSE_PRICE_API, {
-      headers: { "User-Agent": "MSH-API/2.0" },
-      cf: { cacheTtl: 3600 },
+      headers: { "User-Agent": "MSH-API/2.0", "Cache-Control": "no-cache" },
+      cf: { cacheTtl: 0, cacheEverything: false },
     });
     if (!res.ok) return result;
     const data = await res.json() as Array<{
@@ -68,8 +68,8 @@ async function fetchTpexPrices(): Promise<Map<string, PriceInfo>> {
   const result = new Map<string, PriceInfo>();
   try {
     const res = await fetch(TPEX_PRICE_API, {
-      headers: { "User-Agent": "MSH-API/2.0" },
-      cf: { cacheTtl: 3600 },
+      headers: { "User-Agent": "MSH-API/2.0", "Cache-Control": "no-cache" },
+      cf: { cacheTtl: 0, cacheEverything: false },
     });
     if (!res.ok) return result;
     const data = await res.json() as Array<{
@@ -795,56 +795,70 @@ async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; m
   try {
     await initPricesDb(env);
 
-    // ── Step 1: Get actual trade date from TWSE MI_INDEX ──────────────────────
-    // MI_INDEX returns [{Date: "20260615", ...}] with the real last trade date
+    // ── Step 1: Get actual trade date from APIs ──────────────────────────────
+    // Strategy: fetch TPEX (has CDate per row) or TWSE MI_INDEX, validate <= today TW
+    const now0 = new Date();
+    const twNow0 = new Date(now0.getTime() + 8 * 3600000);
+    const todayTW = twNow0.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD today in TW
+    const twHour = twNow0.getUTCHours(); // hour in TW time
     let tradeDate = '';
-    try {
-      const miRes = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/MI_INDEX', {
-        headers: { 'User-Agent': 'MSH-API/2.0' },
-        cf: { cacheTtl: 3600 },
-      });
-      if (miRes.ok) {
-        const miData = await miRes.json() as Array<{ Date?: string }>;
-        if (Array.isArray(miData) && miData.length > 0 && miData[0].Date) {
-          // Date is in format "YYYYMMDD" — validate it
-          const d = String(miData[0].Date).replace(/D/g, '');
-          if (/^d{8}$/.test(d)) tradeDate = d;
-        }
-      }
-    } catch (e) {
-      console.warn('MI_INDEX fetch failed:', e);
-    }
 
-    // Fallback: try TPEX API which sometimes has CDate field
-    if (!tradeDate) {
-      try {
-        const tpexRes = await fetch('https://www.tpex.org.tw/openapi/v1/exchangeReport/DAILY_CLOSE_QUOTES', {
-          headers: { 'User-Agent': 'MSH-API/2.0' },
-          cf: { cacheTtl: 3600 },
-        });
-        if (tpexRes.ok) {
-          const tpexData = await tpexRes.json() as Array<{ CDate?: string }>;
-          if (Array.isArray(tpexData) && tpexData.length > 0 && tpexData[0].CDate) {
-            // CDate is in format "YYYY/MM/DD"
-            const d = String(tpexData[0].CDate).replace(/D/g, '');
-            if (/^d{8}$/.test(d)) tradeDate = d;
+    // Try TPEX first — it often has CDate in each row: "2026/06/15"
+    try {
+      const tpexRes = await fetch('https://www.tpex.org.tw/openapi/v1/exchangeReport/DAILY_CLOSE_QUOTES', {
+        headers: { 'User-Agent': 'MSH-API/2.0', 'Cache-Control': 'no-cache' },
+        cf: { cacheTtl: 0, cacheEverything: false },
+      });
+      if (tpexRes.ok) {
+        const tpexData = await tpexRes.json() as Array<{ CDate?: string; SecuritiesCompanyCode?: string }>;
+        if (Array.isArray(tpexData) && tpexData.length > 0) {
+          const cdateRaw = tpexData[0].CDate || '';
+          // CDate format: "2026/06/15" → "20260615"
+          const d = cdateRaw.replace(/D/g, '');
+          if (/^\d{8}$/.test(d) && d <= todayTW) {
+            tradeDate = d;
+            console.log('Got trade date from TPEX CDate:', tradeDate);
           }
         }
-      } catch (e) {
-        console.warn('TPEX date fetch failed:', e);
       }
-    }
+    } catch (e) { console.warn('TPEX date fetch failed:', e); }
 
-    // Final fallback: use Taiwan current date (UTC+8)
+    // Try TWSE MI_INDEX if TPEX failed
     if (!tradeDate) {
-      const now = new Date();
-      const twDate = new Date(now.getTime() + 8 * 3600000);
-      tradeDate = twDate.toISOString().slice(0, 10).replace(/-/g, '');
+      try {
+        const miRes = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/MI_INDEX', {
+          headers: { 'User-Agent': 'MSH-API/2.0', 'Cache-Control': 'no-cache' },
+          cf: { cacheTtl: 0, cacheEverything: false },
+        });
+        if (miRes.ok) {
+          const miData = await miRes.json() as Array<{ Date?: string }>;
+          if (Array.isArray(miData) && miData.length > 0 && miData[0].Date) {
+            const d = String(miData[0].Date).replace(/D/g, '');
+            if (/^\d{8}$/.test(d) && d <= todayTW) {
+              tradeDate = d;
+              console.log('Got trade date from MI_INDEX:', tradeDate);
+            }
+          }
+        }
+      } catch (e) { console.warn('MI_INDEX fetch failed:', e); }
     }
 
-    console.log('Trade date:', tradeDate);
+    // Fallback: use yesterday TW if after 14:00 TW (market closed), else day before
+    if (!tradeDate) {
+      // Use today if market may be open (before 14:00 TW), else use yesterday
+      const offsetDays = twHour >= 14 ? 0 : -1;
+      const fallback = new Date(twNow0.getTime() + offsetDays * 86400000);
+      tradeDate = fallback.toISOString().slice(0, 10).replace(/-/g, '');
+      // Skip weekends: if Saturday(6) use Friday, if Sunday(0) use Friday
+      const dow = fallback.getUTCDay();
+      if (dow === 6) tradeDate = new Date(fallback.getTime() - 86400000).toISOString().slice(0, 10).replace(/-/g, '');
+      if (dow === 0) tradeDate = new Date(fallback.getTime() - 2 * 86400000).toISOString().slice(0, 10).replace(/-/g, '');
+      console.log('Using fallback trade date:', tradeDate);
+    }
 
-    // ── Step 2: Fetch prices from TWSE + TPEX ────────────────────────────────
+    console.log('Final trade date:', tradeDate, 'Today TW:', todayTW);
+
+        // ── Step 2: Fetch prices from TWSE + TPEX ────────────────────────────────
     const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices()]);
     const allPrices = new Map<string, PriceInfo>();
     for (const [k, v] of twsePrices) allPrices.set(k, v);
@@ -865,19 +879,16 @@ async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; m
       saved += results.filter(r => r.success).length;
     }
 
-    // ── Step 3b: Clean up any stale entries stored under wrong date ──────────
-    // If today's calendar date != actual trade date, delete wrong-date records
-    const now2 = new Date();
-    const twNow = new Date(now2.getTime() + 8 * 3600000);
-    const calendarDate = twNow.toISOString().slice(0, 10).replace(/-/g, '');
-    if (calendarDate !== tradeDate) {
+        // ── Step 3b: Clean up stale entries stored under wrong calendar date ─────────
+    // todayTW is computed in Step 1; if actual trade date differs, delete wrong entries
+    if (todayTW !== tradeDate) {
       try {
-        await env.DB.prepare('DELETE FROM stock_prices WHERE trade_date = ?').bind(calendarDate).run();
-        console.log(`Deleted stale entries for calendar date ${calendarDate}`);
+        await env.DB.prepare('DELETE FROM stock_prices WHERE trade_date = ?').bind(todayTW).run();
+        console.log('Deleted stale entries for calendar date ' + todayTW);
       } catch (e) { console.warn('Cleanup stale dates failed:', e); }
     }
 
-        // ── Step 4: Invalidate KV cache ──────────────────────────────────────────
+// ── Step 4: Invalidate KV cache ──────────────────────────────────────────
     if (env.CACHE) {
       await env.CACHE.delete('prices:latest');
       await env.CACHE.delete('prices:date');
