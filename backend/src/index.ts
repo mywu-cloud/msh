@@ -769,6 +769,123 @@ async function handleSupplementNorway(request: Request, env: Env): Promise<Respo
   }
 }
 
+// ─── Stock Prices Table ────────────────────────────────────────────────────
+async function initPricesDb(env: Env): Promise<void> {
+  try {
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS stock_prices (
+        stock_code TEXT NOT NULL,
+        trade_date TEXT NOT NULL,
+        close REAL,
+        change REAL,
+        change_pct REAL,
+        updated_at TEXT DEFAULT (datetime('now')),
+        PRIMARY KEY (stock_code, trade_date)
+      )
+    `).run();
+  } catch(e) {
+    console.error("initPricesDb error:", e);
+  }
+}
+
+// ─── handleFetchAndSavePrices ────────────────────────────────────────────────
+// Fetch TWSE + TPEX prices and save to stock_prices table
+async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; message: string; trade_date?: string; saved?: number }> {
+  try {
+    await initPricesDb(env);
+    const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices()]);
+    const allPrices = new Map<string, PriceInfo>();
+    for (const [k, v] of twsePrices) allPrices.set(k, v);
+    for (const [k, v] of tpexPrices) allPrices.set(k, v);
+    if (allPrices.size === 0) return { success: false, message: 'No price data fetched (market may be closed)' };
+    // Use Taiwan date (UTC+8)
+    const now = new Date();
+    const twDate = new Date(now.getTime() + 8 * 3600000);
+    const tradeDate = twDate.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
+    // Batch insert
+    const stmts: D1PreparedStatement[] = [];
+    for (const [code, p] of allPrices) {
+      stmts.push(env.DB.prepare(
+        'INSERT OR REPLACE INTO stock_prices (stock_code, trade_date, close, change, change_pct, updated_at) VALUES (?,?,?,?,?,datetime(\'now\'))'
+      ).bind(code, tradeDate, p.close, p.change, p.change_pct));
+    }
+    let saved = 0;
+    const BATCH = 200;
+    for (let i = 0; i < stmts.length; i += BATCH) {
+      const results = await env.DB.batch(stmts.slice(i, i + BATCH));
+      saved += results.filter(r => r.success).length;
+    }
+    // Invalidate prices cache
+    if (env.CACHE) {
+      await env.CACHE.delete('prices:latest');
+      await env.CACHE.delete('prices:date');
+    }
+    console.log(`Prices saved: ${saved} stocks for ${tradeDate}`);
+    return { success: true, message: `Saved ${saved} prices for ${tradeDate}`, trade_date: tradeDate, saved };
+  } catch (err) {
+    console.error("handleFetchAndSavePrices error:", err);
+    return { success: false, message: String(err) };
+  }
+}
+
+// ─── handleGetPrices ─────────────────────────────────────────────────────────
+// GET /api/prices?codes=2330,2317&date=20260615
+async function handleGetPrices(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const dateParam = url.searchParams.get('date') || '';
+  const codesParam = url.searchParams.get('codes') || '';
+  const cacheKey = 'prices:latest';
+  if (!codesParam && !dateParam) {
+    const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
+    if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, 'X-Cache': 'HIT' } });
+  }
+  try {
+    await initPricesDb(env);
+    let tradeDate = dateParam;
+    if (!tradeDate) {
+      const latest = await env.DB.prepare(
+        'SELECT trade_date FROM stock_prices ORDER BY trade_date DESC LIMIT 1'
+      ).first() as { trade_date: string } | null;
+      tradeDate = latest?.trade_date || '';
+    }
+    if (!tradeDate) return jsonResponse({ trade_date: null, count: 0, data: {} });
+    let sql: string;
+    let params: (string | number)[];
+    if (codesParam) {
+      const codes = codesParam.split(',').map((c: string) => c.trim()).filter(Boolean).slice(0, 500);
+      const placeholders = codes.map(() => '?').join(',');
+      sql = `SELECT stock_code, close, change, change_pct FROM stock_prices WHERE trade_date = ? AND stock_code IN (${placeholders})`;
+      params = [tradeDate, ...codes];
+    } else {
+      sql = 'SELECT stock_code, close, change, change_pct FROM stock_prices WHERE trade_date = ?';
+      params = [tradeDate];
+    }
+    const result = await env.DB.prepare(sql).bind(...params).all();
+    const priceMap: Record<string, { close: number; change: number; change_pct: number }> = {};
+    for (const row of result.results || []) {
+      const r = row as { stock_code: string; close: number; change: number; change_pct: number };
+      priceMap[r.stock_code] = { close: r.close, change: r.change, change_pct: r.change_pct };
+    }
+    const responseData = { trade_date: tradeDate, count: Object.keys(priceMap).length, data: priceMap };
+    const text = JSON.stringify(responseData);
+    if (!codesParam && !dateParam && env.CACHE) {
+      await env.CACHE.put(cacheKey, text, { expirationTtl: 3600 });
+    }
+    return new Response(text, { headers: CORS_HEADERS });
+  } catch (err) {
+    console.error("handleGetPrices error:", err);
+    return errorResponse("Prices query failed", 500);
+  }
+}
+
+// ─── handleRefreshPrices (POST) ──────────────────────────────────────────────
+// Manual trigger for price refresh
+async function handleRefreshPrices(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') return errorResponse('Method Not Allowed', 405);
+  const result = await handleFetchAndSavePrices(env);
+  return jsonResponse(result);
+}
+
 // ─── Main Router ─────────────────────────────────────────────────────────────
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -808,6 +925,12 @@ export default {
         ],
       });
     }
+        if (path === "/api/prices" || path === "/api/prices/") return handleGetPrices(request, env);
+    if (path === "/api/refresh-prices" || path === "/api/refresh-prices/") return handleRefreshPrices(request, env);
     return errorResponse("Not found", 404);
   },
-};
+
+  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
+    await handleFetchAndSavePrices(env);
+  }
+,};
