@@ -112,7 +112,7 @@ function downloadCSV(filename: string, headers: string[], rows: (string | number
   URL.revokeObjectURL(url)
 }
 
-function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, hasPrice }: {
+function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, hasPrice, priceMap = {}, priceDate = '' }: {
   rows: BigHolderRow[]
   weekDates: string[]
   startIndex: number
@@ -120,6 +120,8 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
   sortDir: SortDir
   onSort: (col: SortKey) => void
   hasPrice: boolean
+  priceMap?: Record<string, { close: number; change: number; change_pct: number }>
+  priceDate?: string
 }) {
   const thClass = (col: SortKey) =>
     `text-center px-2 py-2 text-slate-700 font-medium whitespace-nowrap cursor-pointer hover:text-primary-600 select-none ${sortKey === col ? 'text-primary-600' : ''}`
@@ -151,7 +153,7 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
               上週持有%<SortIcon col="latest_ratio" sortKey={sortKey} sortDir={sortDir} />
             </th>
             {hasPrice && <>
-              <th className={thClass('price_close')} onClick={() => onSort('price_close')}>收盤價<SortIcon col="price_close" sortKey={sortKey} sortDir={sortDir} /></th>
+              <th className={thClass('price_close')} onClick={() => onSort('price_close')}>{priceDate ? priceDate + ' 收盤' : '收盤'}<SortIcon col="price_close" sortKey={sortKey} sortDir={sortDir} /></th>
               <th className={thClass('price_change')} onClick={() => onSort('price_change')}>漲跌<SortIcon col="price_change" sortKey={sortKey} sortDir={sortDir} /></th>
               <th className={thClass('price_change_pct')} onClick={() => onSort('price_change_pct')}>漲跌幅<SortIcon col="price_change_pct" sortKey={sortKey} sortDir={sortDir} /></th>
             </>}
@@ -178,7 +180,7 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
                   {row.total_change > 0 ? '+' : ''}{row.total_change.toFixed(2)}
                 </td>
                 <td className="text-center px-2 py-2 text-slate-700 text-xs font-medium">{row.latest_ratio.toFixed(2)}%</td>
-                {hasPrice && <PriceCell price={row.price} />}
+                {hasPrice && <PriceCell price={priceMap[row.stock_code] || row.price} />}
               </tr>
             )
           })}
@@ -197,6 +199,14 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
     fetcher,
     { revalidateOnFocus: false }
   )
+
+  const { data: pricesData } = useSWR<{ trade_date: string; data: Record<string, { close: number; change: number; change_pct: number }> }>(
+    `${API_BASE}/api/prices`,
+    fetcher,
+    { revalidateOnFocus: false, refreshInterval: 3600000 }
+  )
+  const priceMap = pricesData?.data || {}
+  const priceDate = pricesData?.trade_date ? (pricesData.trade_date.slice(4,6) + '/' + pricesData.trade_date.slice(6,8)) : ''
 
   function handleSort(col: SortKey) {
     if (sortKey === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
@@ -222,7 +232,7 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
     ...r, is_etf: isEtf(r.stock_code, r.stock_name || '')
   }))
   const weekDates: string[] = data.meta?.week_dates || (rows[0]?.week_dates || [])
-  const hasPrice = rows.some(r => r.price && r.price.close)
+  const hasPrice = Object.keys(priceMap).length > 0 || rows.some(r => r.price && r.price.close)
 
   const filtered = rows.filter(r => {
     // 移除非產業類（類別空白）的項目
@@ -280,7 +290,7 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
           <Download className="w-3.5 h-3.5" />CSV 下載
         </button>
       </div>
-      <StockTable rows={sortedRows} weekDates={weekDates} startIndex={0} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} hasPrice={hasPrice} />
+      <StockTable rows={sortedRows} weekDates={weekDates} startIndex={0} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} hasPrice={hasPrice} priceMap={priceMap} priceDate={priceDate} />
     </div>
   )
 }
