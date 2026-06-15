@@ -98,6 +98,16 @@ function isEtf(code: string): boolean {
   return /^0[0-9]/.test(code)
 }
 
+function shouldInclude(r: BHRow | StockChange): boolean {
+  const code = r.stock_code || ''
+  const name = (r as BHRow).stock_name || (r as StockChange).stock_name || ''
+  const industry = (r as BHRow).industry || (r as StockChange).industry || ''
+  if (!(industry && industry.trim())) return false
+  if (industry === '存托憑證') return false
+  if (name.endsWith('創') || name.endsWith('特')) return false
+  return true
+}
+
 // ─── 起漲標的 + Save + Download 整合組件 ────────────────────────────────────
 function ScreenerWithSave({ market }: { market: Market }) {
   const { data, isLoading } = useSWR<BHResponse>(
@@ -113,7 +123,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
   const weekDates = data?.meta?.week_dates || (rows[0]?.week_dates || [])
 
   const scored: ScoredRow[] = rows
-    .filter(r => !isEtf(r.stock_code) && !!(r.industry && r.industry.trim()) && r.total_change > 0 && r.latest_ratio > 10)
+    .filter(r => shouldInclude(r) && r.total_change > 0 && r.latest_ratio > 10)
     .map(r => ({ ...r, score: scoreStock(r, weekDates) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, 20)
@@ -121,7 +131,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
   const handleDownload = () => {
     if (!scored.length) return
     const recentDates = weekDates.slice(-6)
-    const headers = ['排名', '股票代號', '股票名稱', '產業', ...recentDates.map(d => formatDate(d)), '累計增幅', '持有%', '評分', '收盤價', '漲跌%', '警示']
+    const headers = ['排名', '股票代號', '股票名稱', '產業', ...recentDates.map(d => formatDate(d)), '累計增幅', '持有%', '評分', '收盤價', '漲跌%', '信號']
     const csvRows = scored.map((row, idx) => [
       idx + 1, row.stock_code, row.stock_name || '', row.industry || '',
       ...recentDates.map(d => row.week_changes[d] ?? ''),
@@ -191,7 +201,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">評分</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs hidden md:table-cell">收盤</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs hidden md:table-cell">漲跌%</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">警示</th>
+              <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">信號</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -240,7 +250,7 @@ function WeeklyChangesPanel({ market }: { market: Market }) {
     fetcher, { refreshInterval: 60000 }
   )
   const data: StockChange[] = Array.isArray(rawData) ? rawData : ((rawData as ApiResponse)?.data || [])
-  const filtered = data.filter(s => !isEtf(s.stock_code) && !!(s.industry && s.industry.trim()))
+  const filtered = data.filter(s => shouldInclude(s))
 
   const handleDownload = () => {
     const headers = ['股票代號', '股票名稱', '市場', '產業', '本週變化%', '大股東持有%']
@@ -303,7 +313,7 @@ function HeatmapPanel({ market }: { market: Market }) {
   )
   if (isLoading) return <div className="flex items-center justify-center py-8 text-slate-400 text-sm"><span className="animate-spin mr-2">⟳</span>計算熱力圖...</div>
   let rows: BHRow[] = (data?.data || [])
-  rows = rows.filter(r => !isEtf(r.stock_code) && !!(r.industry && r.industry.trim())).slice(0, 30)
+  rows = rows.filter(r => shouldInclude(r))rows = rows.filter(r => shouldInclude(r)).slice(0, 30)
   const weekDates = data?.meta?.week_dates || (rows[0]?.week_dates || [])
   if (rows.length === 0) return <div className="py-8 text-center text-slate-400 text-sm">暫無資料</div>
 
@@ -382,7 +392,7 @@ function DivergencePanel({ market }: { market: Market }) {
   )
   if (isLoading) return <div className="flex items-center justify-center py-8 text-slate-400 text-sm"><span className="animate-spin mr-2">⟳</span>分析中...</div>
   let rows: BHRow[] = data?.data || []
-  rows = rows.filter(r => !isEtf(r.stock_code) && !!(r.industry && r.industry.trim()))
+  rows = rows.filter(r => shouldInclude(r))
   const weekDates = data?.meta?.week_dates || []
   const strongBuy = rows.filter(r => { const rc = weekDates.slice(-3).map(d => r.week_changes[d] ?? 0); return rc.every(v => v > 0) && r.total_change > 3 && r.latest_ratio > 20 }).slice(0, 15)
   const strongSell = rows.filter(r => r.latest_change < -2 && r.total_change < 0).sort((a, b) => a.latest_change - b.latest_change).slice(0, 10)
