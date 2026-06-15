@@ -114,6 +114,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
     `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=12&include_price=1`,
     fetcher,
     { revalidateOnFocus: false }
+  )
 
   const { data: pricesData } = useSWR<{ trade_date: string; data: Record<string, { close: number; change: number; change_pct: number }> }>(
     `${API_BASE}/api/prices`,
@@ -122,7 +123,6 @@ function ScreenerWithSave({ market }: { market: Market }) {
   )
   const priceMap = pricesData?.data || {}
   const priceDate = pricesData?.trade_date ? (pricesData.trade_date.slice(4,6) + '/' + pricesData.trade_date.slice(6,8)) : ''
-  )
 
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [saveMsg, setSaveMsg] = useState('')
@@ -322,7 +322,7 @@ function HeatmapPanel({ market }: { market: Market }) {
   )
   if (isLoading) return <div className="flex items-center justify-center py-8 text-slate-400 text-sm"><span className="animate-spin mr-2">⟳</span>計算熱力圖...</div>
   let rows: BHRow[] = (data?.data || [])
-  rows = rows.filter(r => shouldInclude(r))rows = rows.filter(r => shouldInclude(r)).slice(0, 30)
+  rows = rows.filter(r => shouldInclude(r)).slice(0, 30)
   const weekDates = data?.meta?.week_dates || (rows[0]?.week_dates || [])
   if (rows.length === 0) return <div className="py-8 text-center text-slate-400 text-sm">暫無資料</div>
 
