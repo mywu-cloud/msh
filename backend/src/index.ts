@@ -625,6 +625,150 @@ async function handleUpsertStock(request: Request, env: Env): Promise<Response> 
   }
 }
 
+
+// ─── handleFixDates (POST) ───────────────────────────────────────────────────
+// Fix date format: convert "YYYY-MM-DD" → "YYYYMMDD" in distributions table
+async function handleFixDates(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") return errorResponse("Method Not Allowed", 405);
+  try {
+    // Find all bad-format dates (YYYY-MM-DD)
+    const badDates = await env.DB.prepare(
+      "SELECT DISTINCT date FROM distributions WHERE date LIKE '____-__-__'"
+    ).all();
+    const badDateList = (badDates.results || []).map((r: Record<string, unknown>) => r.date as string);
+    if (!badDateList.length) return jsonResponse({ success: true, message: "No bad dates found", fixed: 0 });
+
+    let fixed = 0, deleted = 0, errors = 0;
+    for (const badDate of badDateList) {
+      const goodDate = badDate.replace(/-/g, '');
+      const existing = await env.DB.prepare(
+        "SELECT COUNT(*) as cnt FROM distributions WHERE date = ?"
+      ).bind(goodDate).first() as { cnt: number } | null;
+      
+      if (existing && existing.cnt > 0) {
+        const del = await env.DB.prepare(
+          "DELETE FROM distributions WHERE date = ?"
+        ).bind(badDate).run();
+        deleted += del.meta?.changes || 0;
+      } else {
+        const upd = await env.DB.prepare(
+          "UPDATE distributions SET date = ? WHERE date = ?"
+        ).bind(goodDate, badDate).run();
+        fixed += upd.meta?.changes || 0;
+      }
+    }
+    
+    if (env.CACHE) {
+      await env.CACHE.delete('allstocks:v1');
+      for (const market of ['twse','tpex','all']) {
+        for (const sfx of ['6','12']) {
+          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:total_change:${sfx}:p::`);
+          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:total_change:${sfx}:np::`);
+        }
+      }
+    }
+    return jsonResponse({ success: true, bad_dates: badDateList, fixed, deleted, errors });
+  } catch (err) {
+    console.error("handleFixDates error:", err);
+    return errorResponse("Fix dates failed: " + String(err), 500);
+  }
+}
+
+// ─── handleSupplementNorway (POST) ──────────────────────────────────────────
+// Bulk supplement missing week data from norway.twsthr.info TopWeek scrape
+// Body: { stocks: [{code, r0508, r0515, r0522, r0529}], force?: boolean }
+async function handleSupplementNorway(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") return errorResponse("Method Not Allowed", 405);
+  try {
+    const body = await request.json() as {
+      stocks: Array<{ code: string; r0508: number; r0515: number; r0522: number; r0529: number }>;
+      force?: boolean;
+    };
+    if (!body.stocks?.length) return errorResponse("stocks array required");
+    const force = body.force || false;
+    const targetDates = ['20260508', '20260515', '20260522', '20260529'];
+    
+    let processed = 0, skipped = 0, errors = 0;
+    const allStmts: D1PreparedStatement[] = [];
+    
+    for (const stock of body.stocks) {
+      const code = (stock.code || '').trim().toUpperCase();
+      if (!code || !/^[0-9A-Z]{3,8}$/.test(code)) { errors++; continue; }
+      const ratios: Record<string, number> = {
+        '20260508': stock.r0508 || 0,
+        '20260515': stock.r0515 || 0,
+        '20260522': stock.r0522 || 0,
+        '20260529': stock.r0529 || 0,
+      };
+      
+      if (!force) {
+        const dateList = targetDates.map(d => "'" + d + "'").join(',');
+        const existing = await env.DB.prepare(
+          `SELECT date, SUM(CASE WHEN CAST(bracket AS INTEGER) >= 10 AND bracket != '17' THEN ratio ELSE 0 END) as big_ratio
+           FROM distributions WHERE stock_code = ? AND date IN (${dateList}) GROUP BY date`
+        ).bind(code).all();
+        const rows = existing.results as Array<{date: string; big_ratio: number}>;
+        if (rows.length >= 3) {
+          const vals = rows.map(r => Math.round((r.big_ratio || 0) * 100));
+          const allSame = vals.length > 1 && vals.every(v => v === vals[0]);
+          const allNonZero = vals.every(v => v > 0);
+          if (!allSame && allNonZero) { skipped++; continue; }
+        }
+      }
+      
+      for (const date of targetDates) {
+        const ratio = ratios[date];
+        if (!ratio || ratio <= 0) continue;
+        allStmts.push(env.DB.prepare("DELETE FROM distributions WHERE stock_code = ? AND date = ?").bind(code, date));
+        allStmts.push(env.DB.prepare(
+          "INSERT OR REPLACE INTO distributions (stock_code, date, bracket, holders, shares, ratio) VALUES (?,?,?,?,?,?)"
+        ).bind(code, date, '10', 0, 0, ratio));
+        allStmts.push(env.DB.prepare(
+          "INSERT OR REPLACE INTO distributions (stock_code, date, bracket, holders, shares, ratio) VALUES (?,?,?,?,?,?)"
+        ).bind(code, date, '17', 0, 0, 100));
+      }
+      processed++;
+    }
+    
+    let inserted = 0;
+    const BATCH = 90;
+    for (let i = 0; i < allStmts.length; i += BATCH) {
+      try {
+        const results = await env.DB.batch(allStmts.slice(i, i + BATCH));
+        inserted += results.filter(r => r.success).length;
+      } catch (e) { errors++; }
+    }
+    
+    if (env.CACHE) {
+      for (const market of ['twse','tpex','all']) {
+        for (const sfx of ['6','12']) {
+          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:total_change:${sfx}:p::`);
+          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:total_change:${sfx}:np::`);
+          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:latest_change:${sfx}:p::`);
+          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:latest_change:${sfx}:np::`);
+        }
+      }
+      await env.CACHE.delete('allstocks:v1');
+      for (const t of ['increase','decrease']) {
+        for (const m of ['twse','tpex','all']) {
+          await env.CACHE.delete(`topchanges:v3:${t}:${m}:50`);
+        }
+      }
+    }
+    
+    return jsonResponse({ 
+      success: true, 
+      total_stocks: body.stocks.length,
+      processed, skipped, errors,
+      stmts_count: allStmts.length,
+      inserted
+    });
+  } catch (err) {
+    console.error("handleSupplementNorway error:", err);
+    return errorResponse("Supplement failed: " + String(err), 500);
+  }
+}
+
 // ─── Main Router ─────────────────────────────────────────────────────────────
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -644,6 +788,8 @@ export default {
   if (stockMatch) return handleStockDetail(request, env, stockMatch[1]);
   if (path === "/api/all-stocks" || path === "/api/all-stocks/") return handleAllStocks(env);
   if (path === "/api/upsert-stock" || path === "/api/upsert-stock/") return handleUpsertStock(request, env);
+    if (path === "/api/fix-dates" || path === "/api/fix-dates/") return handleFixDates(request, env);
+    if (path === "/api/supplement-norway" || path === "/api/supplement-norway/") return handleSupplementNorway(request, env);
     if (distMatch) return handleDistribution(request, env, distMatch[1].toUpperCase());
     if (path === "/" || path === "/api") {
       return jsonResponse({
