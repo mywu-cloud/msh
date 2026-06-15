@@ -9,7 +9,7 @@ import clsx from 'clsx'
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.tw-mywu.workers.dev'
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
-type Market = 'twse' | 'tpex' | 'etf'
+type Market = 'twse' | 'tpex'
 
 interface StockChange {
   stock_code: string
@@ -100,9 +100,8 @@ function isEtf(code: string): boolean {
 
 // ─── 起漲標的 + Save + Download 整合組件 ────────────────────────────────────
 function ScreenerWithSave({ market }: { market: Market }) {
-  const apiMarket = market === 'etf' ? 'twse' : market
   const { data, isLoading } = useSWR<BHResponse>(
-    `${API_BASE}/api/big-holder-changes?market=${apiMarket}&limit=5000&sort=total_change&weeks=12&include_price=1`,
+    `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=12&include_price=1`,
     fetcher,
     { revalidateOnFocus: false }
   )
@@ -114,10 +113,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
   const weekDates = data?.meta?.week_dates || (rows[0]?.week_dates || [])
 
   const scored: ScoredRow[] = rows
-    .filter(r => {
-      if (market === 'etf') return isEtf(r.stock_code)
-      return !isEtf(r.stock_code) && r.total_change > 0 && r.latest_ratio > 10
-    })
+    .filter(r => !isEtf(r.stock_code) && r.total_change > 0 && r.latest_ratio > 10)
     .map(r => ({ ...r, score: scoreStock(r, weekDates) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, 20)
@@ -239,13 +235,12 @@ function ScreenerWithSave({ market }: { market: Market }) {
 // ─── 本週主力異動 Panel ───────────────────────────────────────────────────────
 function WeeklyChangesPanel({ market }: { market: Market }) {
   const [type, setType] = useState<'increase' | 'decrease'>('increase')
-  const apiMarket = market === 'etf' ? 'all' : market
   const { data: rawData, isLoading } = useSWR<ApiResponse | StockChange[]>(
-    `${API_BASE}/api/top-changes?market=${apiMarket}&type=${type}&limit=20`,
+    `${API_BASE}/api/top-changes?market=${market}&type=${type}&limit=20`,
     fetcher, { refreshInterval: 60000 }
   )
   const data: StockChange[] = Array.isArray(rawData) ? rawData : ((rawData as ApiResponse)?.data || [])
-  const filtered = market === 'etf' ? data.filter(s => isEtf(s.stock_code)) : data.filter(s => !isEtf(s.stock_code))
+  const filtered = data.filter(s => !isEtf(s.stock_code))
 
   const handleDownload = () => {
     const headers = ['股票代號', '股票名稱', '市場', '產業', '本週變化%', '大股東持有%']
@@ -302,15 +297,13 @@ function WeeklyChangesPanel({ market }: { market: Market }) {
 
 // ─── 12週籌碼熱力圖 Panel ─────────────────────────────────────────────────────
 function HeatmapPanel({ market }: { market: Market }) {
-  const apiMarket = market === 'etf' ? 'twse' : market
   const { data, isLoading } = useSWR<BHResponse>(
-    `${API_BASE}/api/big-holder-changes?market=${apiMarket}&limit=50&sort=total_change&weeks=12`,
+    `${API_BASE}/api/big-holder-changes?market=${market}&limit=50&sort=total_change&weeks=12`,
     fetcher, { revalidateOnFocus: false }
   )
   if (isLoading) return <div className="flex items-center justify-center py-8 text-slate-400 text-sm"><span className="animate-spin mr-2">⟳</span>計算熱力圖...</div>
   let rows: BHRow[] = (data?.data || [])
-  if (market === 'etf') rows = rows.filter(r => isEtf(r.stock_code)).slice(0, 30)
-  else rows = rows.filter(r => !isEtf(r.stock_code)).slice(0, 30)
+  rows = rows.filter(r => !isEtf(r.stock_code)).slice(0, 30)
   const weekDates = data?.meta?.week_dates || (rows[0]?.week_dates || [])
   if (rows.length === 0) return <div className="py-8 text-center text-slate-400 text-sm">暫無資料</div>
 
@@ -383,15 +376,13 @@ function HeatmapPanel({ market }: { market: Market }) {
 
 // ─── 股東人數背離警示 Panel ───────────────────────────────────────────────────
 function DivergencePanel({ market }: { market: Market }) {
-  const apiMarket = market === 'etf' ? 'twse' : market
   const { data, isLoading } = useSWR<BHResponse>(
-    `${API_BASE}/api/big-holder-changes?market=${apiMarket}&limit=5000&sort=total_change&weeks=6`,
+    `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=6`,
     fetcher, { revalidateOnFocus: false }
   )
   if (isLoading) return <div className="flex items-center justify-center py-8 text-slate-400 text-sm"><span className="animate-spin mr-2">⟳</span>分析中...</div>
   let rows: BHRow[] = data?.data || []
-  if (market === 'etf') rows = rows.filter(r => isEtf(r.stock_code))
-  else rows = rows.filter(r => !isEtf(r.stock_code))
+  rows = rows.filter(r => !isEtf(r.stock_code))
   const weekDates = data?.meta?.week_dates || []
   const strongBuy = rows.filter(r => { const rc = weekDates.slice(-3).map(d => r.week_changes[d] ?? 0); return rc.every(v => v > 0) && r.total_change > 3 && r.latest_ratio > 20 }).slice(0, 15)
   const strongSell = rows.filter(r => r.latest_change < -2 && r.total_change < 0).sort((a, b) => a.latest_change - b.latest_change).slice(0, 10)
@@ -542,7 +533,6 @@ const PANELS: { id: Panel; label: string; icon: React.ElementType; desc: string 
 const MARKETS: { id: Market; label: string }[] = [
   { id: 'twse', label: '上市' },
   { id: 'tpex', label: '上櫃' },
-  { id: 'etf', label: 'ETF' },
 ]
 
 export default function TopChangesPage() {
