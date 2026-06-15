@@ -578,6 +578,53 @@ async function handleAllStocks(env: Env): Promise<Response> {
   }
 }
 
+// ─── handleUpsertStock (POST) ────────────────────────────────────────────────
+// Upsert bracket data for a specific stock on specific dates
+// Body: { stock_code: string, dates: { [date: string]: { bracket: number, holders: number, shares: number, ratio: number }[] } }
+async function handleUpsertStock(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") return errorResponse("Method Not Allowed", 405);
+  try {
+    const body = await request.json() as {
+      stock_code: string;
+      dates: Record<string, Array<{ bracket: number; holders: number; shares: number; ratio: number }>>;
+    };
+    if (!body.stock_code || !body.dates) return errorResponse("stock_code and dates required");
+    const code = body.stock_code.trim().toUpperCase();
+    if (!/^[0-9A-Z]{3,8}$/.test(code)) return errorResponse("Invalid stock code");
+
+    const stmts: D1PreparedStatement[] = [];
+    let total = 0;
+    for (const [date, brackets] of Object.entries(body.dates)) {
+      if (!/^\d{8}$/.test(date)) continue;
+      for (const b of brackets) {
+        stmts.push(env.DB.prepare(
+          "INSERT OR REPLACE INTO distributions (stock_code, date, bracket, holders, shares, ratio) VALUES (?,?,?,?,?,?)"
+        ).bind(code, date, String(b.bracket), b.holders, b.shares, b.ratio));
+        total++;
+      }
+    }
+    if (!stmts.length) return errorResponse("No valid data to insert");
+    const results = await env.DB.batch(stmts);
+    const inserted = results.filter(r => r.success).length;
+    // Invalidate cache for this stock
+    if (env.CACHE) {
+      await env.CACHE.delete(`dist:${code}`);
+      await env.CACHE.delete(`stockdetail:v1:${code}`);
+      // Also clear big-holder-changes caches
+      for (const market of ['twse','tpex','all']) {
+        for (const sfx of ['6','12']) {
+          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:total_change:${sfx}:p::`);
+          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:total_change:${sfx}:np::`);
+        }
+      }
+    }
+    return jsonResponse({ success: true, stock_code: code, total_stmts: total, inserted, errors: total - inserted });
+  } catch (err) {
+    console.error("handleUpsertStock error:", err);
+    return errorResponse("Upsert failed: " + String(err), 500);
+  }
+}
+
 // ─── Main Router ─────────────────────────────────────────────────────────────
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -596,6 +643,7 @@ export default {
   const stockMatch = path.match(/^\/api\/stock\/([A-Z0-9]+)$/i);
   if (stockMatch) return handleStockDetail(request, env, stockMatch[1]);
   if (path === "/api/all-stocks" || path === "/api/all-stocks/") return handleAllStocks(env);
+  if (path === "/api/upsert-stock" || path === "/api/upsert-stock/") return handleUpsertStock(request, env);
     if (distMatch) return handleDistribution(request, env, distMatch[1].toUpperCase());
     if (path === "/" || path === "/api") {
       return jsonResponse({
