@@ -500,6 +500,84 @@ async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: s
   return jsonResponse({ success: inserted > 0, source: "tdcc", message: `TDCC：匯入 ${inserted} 筆，略過 ${skipped} 筆，失敗 ${errors} 筆`, date: isoDate, total_rows: dataRows.length, inserted, skipped, errors, ...(firstError ? { first_error: firstError } : {}) });
 }
 
+// ─── handleStockDetail ──────────────────────────────────────────────────────
+async function handleStockDetail(request: Request, env: Env, stockCode: string): Promise<Response> {
+  if (!stockCode || !/^[0-9A-Z]{4,8}$/i.test(stockCode)) return errorResponse("Invalid stock code");
+  const code = stockCode.toUpperCase();
+  const cacheKey = `stockdetail:v1:${code}`;
+  const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
+  if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
+  try {
+    const datesResult = await env.DB.prepare("SELECT DISTINCT date FROM holder_distribution ORDER BY date DESC LIMIT 13").all();
+    const allDates = (datesResult.results || []).map((r: Record<string, unknown>) => r.date as string).sort();
+    if (allDates.length < 2) return errorResponse("Insufficient data", 404);
+    const weekDates = allDates.slice(-12);
+    const prevDate = allDates.length > 12 ? allDates[allDates.length - 13] : allDates[0];
+    const allNeeded = [...new Set([prevDate, ...weekDates])];
+    const datesList = allNeeded.map(d => `'${d}'`).join(",");
+    const sql = `
+      SELECT hd.date,
+        SUM(CASE WHEN CAST(hd.bracket AS INTEGER) >= 10 AND CAST(hd.bracket AS INTEGER) != 17 THEN hd.ratio ELSE 0 END) as big_holder_ratio,
+        SUM(CASE WHEN CAST(hd.bracket AS INTEGER) BETWEEN 4 AND 9 THEN hd.ratio ELSE 0 END) as mid_holder_ratio,
+        SUM(CASE WHEN CAST(hd.bracket AS INTEGER) BETWEEN 1 AND 3 THEN hd.ratio ELSE 0 END) as small_holder_ratio,
+        SUM(CASE WHEN CAST(hd.bracket AS INTEGER) = 17 THEN hd.holders ELSE 0 END) as total_holders,
+        si.stock_name, si.market, si.industry
+      FROM holder_distribution hd
+      LEFT JOIN stock_info si ON hd.stock_code = si.stock_code
+      WHERE hd.stock_code = ? AND hd.date IN (${datesList})
+      GROUP BY hd.date
+      ORDER BY hd.date ASC
+    `;
+    const result = await env.DB.prepare(sql).bind(code).all();
+    const rows = result.results as Array<{ date: string; big_holder_ratio: number; mid_holder_ratio: number; small_holder_ratio: number; total_holders: number; stock_name: string; market: string; industry: string }>;
+    if (!rows.length) return errorResponse("Stock not found", 404);
+    const stockName = rows[0]?.stock_name || "";
+    const market = rows[0]?.market || "";
+    const industry = rows[0]?.industry || "";
+    const latestRow = rows[rows.length - 1];
+    const prevRow = rows.find(r => r.date === prevDate) || rows[0];
+    const big_holder_trend = Math.round(((latestRow.big_holder_ratio || 0) - (prevRow?.big_holder_ratio || 0)) * 100) / 100;
+    const mid_holder_trend = Math.round(((latestRow.mid_holder_ratio || 0) - (prevRow?.mid_holder_ratio || 0)) * 100) / 100;
+    const small_holder_trend = Math.round(((latestRow.small_holder_ratio || 0) - (prevRow?.small_holder_ratio || 0)) * 100) / 100;
+    const total_holders = latestRow.total_holders || 0;
+    let price = null;
+    try {
+      const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices()]);
+      price = twsePrices.get(code) || tpexPrices.get(code) || null;
+    } catch(e) { /* ignore */ }
+    const responseData = {
+      stock_code: code, stock_name: stockName, market, industry,
+      big_holder_trend, mid_holder_trend, small_holder_trend, total_holders,
+      latest_ratio: latestRow.big_holder_ratio || 0,
+      price,
+      week_dates: weekDates,
+      weekly_ratios: rows.map(r => ({ date: r.date, big: r.big_holder_ratio, mid: r.mid_holder_ratio, small: r.small_holder_ratio }))
+    };
+    const responseText = JSON.stringify(responseData);
+    if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 1800 });
+    return new Response(responseText, { headers: CORS_HEADERS });
+  } catch (err) {
+    console.error("handleStockDetail error:", err);
+    return errorResponse("Database query failed", 500);
+  }
+}
+
+// ─── handleAllStocks ──────────────────────────────────────────────────────────
+async function handleAllStocks(env: Env): Promise<Response> {
+  const cacheKey = 'allstocks:v1';
+  const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
+  if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
+  try {
+    const result = await env.DB.prepare("SELECT DISTINCT stock_code FROM holder_distribution WHERE stock_code NOT LIKE '0%' ORDER BY stock_code ASC").all();
+    const stocks = (result.results || []).map((r: Record<string, unknown>) => ({ stock_code: r.stock_code as string }));
+    const responseText = JSON.stringify({ count: stocks.length, stocks });
+    if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 3600 });
+    return new Response(responseText, { headers: CORS_HEADERS });
+  } catch (err) {
+    return errorResponse("Query failed", 500);
+  }
+}
+
 // ─── Main Router ─────────────────────────────────────────────────────────────
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -515,6 +593,9 @@ export default {
     if (path === "/api/screener-snapshot" || path === "/api/screener-snapshot/") return handleScreenerSnapshot(request, env);
     if (path === "/api/screener-history" || path === "/api/screener-history/") return handleScreenerHistory(request, env);
     const distMatch = path.match(/^\/api\/distribution\/([A-Z0-9]+)$/i);
+  const stockMatch = path.match(/^\/api\/stock\/([A-Z0-9]+)$/i);
+  if (stockMatch) return handleStockDetail(request, env, stockMatch[1]);
+  if (path === "/api/all-stocks" || path === "/api/all-stocks/") return handleAllStocks(env);
     if (distMatch) return handleDistribution(request, env, distMatch[1].toUpperCase());
     if (path === "/" || path === "/api") {
       return jsonResponse({
