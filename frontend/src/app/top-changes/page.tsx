@@ -113,7 +113,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
   const weekDates = data?.meta?.week_dates || (rows[0]?.week_dates || [])
 
   const scored: ScoredRow[] = rows
-    .filter(r => !isEtf(r.stock_code) && r.total_change > 0 && r.latest_ratio > 10)
+    .filter(r => !isEtf(r.stock_code) && !!(r.industry && r.industry.trim()) && r.total_change > 0 && r.latest_ratio > 10)
     .map(r => ({ ...r, score: scoreStock(r, weekDates) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, 20)
@@ -240,7 +240,7 @@ function WeeklyChangesPanel({ market }: { market: Market }) {
     fetcher, { refreshInterval: 60000 }
   )
   const data: StockChange[] = Array.isArray(rawData) ? rawData : ((rawData as ApiResponse)?.data || [])
-  const filtered = data.filter(s => !isEtf(s.stock_code))
+  const filtered = data.filter(s => !isEtf(s.stock_code) && !!(s.industry && s.industry.trim()))
 
   const handleDownload = () => {
     const headers = ['股票代號', '股票名稱', '市場', '產業', '本週變化%', '大股東持有%']
@@ -303,7 +303,7 @@ function HeatmapPanel({ market }: { market: Market }) {
   )
   if (isLoading) return <div className="flex items-center justify-center py-8 text-slate-400 text-sm"><span className="animate-spin mr-2">⟳</span>計算熱力圖...</div>
   let rows: BHRow[] = (data?.data || [])
-  rows = rows.filter(r => !isEtf(r.stock_code)).slice(0, 30)
+  rows = rows.filter(r => !isEtf(r.stock_code) && !!(r.industry && r.industry.trim())).slice(0, 30)
   const weekDates = data?.meta?.week_dates || (rows[0]?.week_dates || [])
   if (rows.length === 0) return <div className="py-8 text-center text-slate-400 text-sm">暫無資料</div>
 
@@ -382,7 +382,7 @@ function DivergencePanel({ market }: { market: Market }) {
   )
   if (isLoading) return <div className="flex items-center justify-center py-8 text-slate-400 text-sm"><span className="animate-spin mr-2">⟳</span>分析中...</div>
   let rows: BHRow[] = data?.data || []
-  rows = rows.filter(r => !isEtf(r.stock_code))
+  rows = rows.filter(r => !isEtf(r.stock_code) && !!(r.industry && r.industry.trim()))
   const weekDates = data?.meta?.week_dates || []
   const strongBuy = rows.filter(r => { const rc = weekDates.slice(-3).map(d => r.week_changes[d] ?? 0); return rc.every(v => v > 0) && r.total_change > 3 && r.latest_ratio > 20 }).slice(0, 15)
   const strongSell = rows.filter(r => r.latest_change < -2 && r.total_change < 0).sort((a, b) => a.latest_change - b.latest_change).slice(0, 10)
