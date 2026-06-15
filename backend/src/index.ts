@@ -790,19 +790,68 @@ async function initPricesDb(env: Env): Promise<void> {
 
 // ─── handleFetchAndSavePrices ────────────────────────────────────────────────
 // Fetch TWSE + TPEX prices and save to stock_prices table
+// Uses TWSE MI_INDEX to get actual trade date (not today's calendar date)
 async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; message: string; trade_date?: string; saved?: number }> {
   try {
     await initPricesDb(env);
+
+    // ── Step 1: Get actual trade date from TWSE MI_INDEX ──────────────────────
+    // MI_INDEX returns [{Date: "20260615", ...}] with the real last trade date
+    let tradeDate = '';
+    try {
+      const miRes = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/MI_INDEX', {
+        headers: { 'User-Agent': 'MSH-API/2.0' },
+        cf: { cacheTtl: 3600 },
+      });
+      if (miRes.ok) {
+        const miData = await miRes.json() as Array<{ Date?: string }>;
+        if (Array.isArray(miData) && miData.length > 0 && miData[0].Date) {
+          // Date is in format "YYYYMMDD" — validate it
+          const d = String(miData[0].Date).replace(/D/g, '');
+          if (/^d{8}$/.test(d)) tradeDate = d;
+        }
+      }
+    } catch (e) {
+      console.warn('MI_INDEX fetch failed:', e);
+    }
+
+    // Fallback: try TPEX API which sometimes has CDate field
+    if (!tradeDate) {
+      try {
+        const tpexRes = await fetch('https://www.tpex.org.tw/openapi/v1/exchangeReport/DAILY_CLOSE_QUOTES', {
+          headers: { 'User-Agent': 'MSH-API/2.0' },
+          cf: { cacheTtl: 3600 },
+        });
+        if (tpexRes.ok) {
+          const tpexData = await tpexRes.json() as Array<{ CDate?: string }>;
+          if (Array.isArray(tpexData) && tpexData.length > 0 && tpexData[0].CDate) {
+            // CDate is in format "YYYY/MM/DD"
+            const d = String(tpexData[0].CDate).replace(/D/g, '');
+            if (/^d{8}$/.test(d)) tradeDate = d;
+          }
+        }
+      } catch (e) {
+        console.warn('TPEX date fetch failed:', e);
+      }
+    }
+
+    // Final fallback: use Taiwan current date (UTC+8)
+    if (!tradeDate) {
+      const now = new Date();
+      const twDate = new Date(now.getTime() + 8 * 3600000);
+      tradeDate = twDate.toISOString().slice(0, 10).replace(/-/g, '');
+    }
+
+    console.log('Trade date:', tradeDate);
+
+    // ── Step 2: Fetch prices from TWSE + TPEX ────────────────────────────────
     const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices()]);
     const allPrices = new Map<string, PriceInfo>();
     for (const [k, v] of twsePrices) allPrices.set(k, v);
     for (const [k, v] of tpexPrices) allPrices.set(k, v);
     if (allPrices.size === 0) return { success: false, message: 'No price data fetched (market may be closed)' };
-    // Use Taiwan date (UTC+8)
-    const now = new Date();
-    const twDate = new Date(now.getTime() + 8 * 3600000);
-    const tradeDate = twDate.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
-    // Batch insert
+
+    // ── Step 3: Batch insert into D1 ─────────────────────────────────────────
     const stmts: D1PreparedStatement[] = [];
     for (const [code, p] of allPrices) {
       stmts.push(env.DB.prepare(
@@ -815,7 +864,20 @@ async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; m
       const results = await env.DB.batch(stmts.slice(i, i + BATCH));
       saved += results.filter(r => r.success).length;
     }
-    // Invalidate prices cache
+
+    // ── Step 3b: Clean up any stale entries stored under wrong date ──────────
+    // If today's calendar date != actual trade date, delete wrong-date records
+    const now2 = new Date();
+    const twNow = new Date(now2.getTime() + 8 * 3600000);
+    const calendarDate = twNow.toISOString().slice(0, 10).replace(/-/g, '');
+    if (calendarDate !== tradeDate) {
+      try {
+        await env.DB.prepare('DELETE FROM stock_prices WHERE trade_date = ?').bind(calendarDate).run();
+        console.log(`Deleted stale entries for calendar date ${calendarDate}`);
+      } catch (e) { console.warn('Cleanup stale dates failed:', e); }
+    }
+
+        // ── Step 4: Invalidate KV cache ──────────────────────────────────────────
     if (env.CACHE) {
       await env.CACHE.delete('prices:latest');
       await env.CACHE.delete('prices:date');
