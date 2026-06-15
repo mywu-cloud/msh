@@ -57,6 +57,14 @@ function isEtf(code: string, name: string): boolean {
 function hasIndustry(row: BigHolderRow): boolean {
   return !!(row.industry && row.industry.trim())
 }
+function shouldInclude(row: BigHolderRow): boolean {
+  if (!hasIndustry(row)) return false
+  if (row.industry === '存托憑證') return false
+  const name = row.stock_name || ''
+  if (name.endsWith('創') || name.endsWith('特')) return false
+  return true
+}
+
 
 function formatDate(d: string): string {
   if (d.length === 8) return d.slice(4, 6) + '/' + d.slice(6, 8)
@@ -218,7 +226,7 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
 
   const filtered = rows.filter(r => {
     // 移除非產業類（類別空白）的項目
-    if (!hasIndustry(r)) return false
+    if (!shouldInclude(r)) return false
     if (etfOnly) return r.is_etf === true
     if (!showEtf && r.is_etf) return false
     if (searchQuery) {
