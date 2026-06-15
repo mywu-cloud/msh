@@ -54,6 +54,10 @@ function isEtf(code: string, name: string): boolean {
   return false
 }
 
+function hasIndustry(row: BigHolderRow): boolean {
+  return !!(row.industry && row.industry.trim())
+}
+
 function formatDate(d: string): string {
   if (d.length === 8) return d.slice(4, 6) + '/' + d.slice(6, 8)
   if (d.length === 10) return d.slice(5, 7) + '/' + d.slice(8, 10)
@@ -213,6 +217,8 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
   const hasPrice = rows.some(r => r.price && r.price.close)
 
   const filtered = rows.filter(r => {
+    // 移除非產業類（類別空白）的項目
+    if (!hasIndustry(r)) return false
     if (etfOnly) return r.is_etf === true
     if (!showEtf && r.is_etf) return false
     if (searchQuery) {
