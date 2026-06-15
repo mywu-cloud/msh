@@ -61,8 +61,8 @@ function formatDate(d: string): string {
 }
 
 function ChangeCell({ value }: { value: number | null | undefined }) {
-  if (value === null || value === undefined) return <td className="text-center text-slate-300 px-2 py-2 text-xs">—</td>
-  if (value === 0) return <td className="text-center text-slate-400 px-2 py-2 text-xs">0.00</td>
+  if (value === null || value === undefined) return <td className="text-center text-slate-700 px-2 py-2 text-xs">—</td>
+  if (value === 0) return <td className="text-center text-slate-600 px-2 py-2 text-xs">0.00</td>
   const isPos = value > 0
   return <td className={`text-center px-2 py-2 text-xs font-medium ${isPos ? 'text-red-600' : 'text-green-600'}`}>
     {isPos ? '+' : ''}{value.toFixed(2)}
@@ -70,10 +70,10 @@ function ChangeCell({ value }: { value: number | null | undefined }) {
 }
 
 function PriceCell({ price }: { price?: PriceInfo | null }) {
-  if (!price || !price.close) return <><td className="text-center px-2 py-2 text-xs text-slate-400">—</td><td className="text-center px-2 py-2 text-xs text-slate-400">—</td><td className="text-center px-2 py-2 text-xs text-slate-400">—</td></>
+  if (!price || !price.close) return <><td className="text-center px-2 py-2 text-xs text-slate-600">—</td><td className="text-center px-2 py-2 text-xs text-slate-600">—</td><td className="text-center px-2 py-2 text-xs text-slate-600">—</td></>
   const isPos = price.change > 0
   const isNeg = price.change < 0
-  const cls = isPos ? 'text-red-600' : isNeg ? 'text-green-600' : 'text-slate-500'
+  const cls = isPos ? 'text-red-600' : isNeg ? 'text-green-600' : 'text-slate-700'
   return <>
     <td className={`text-center px-2 py-2 text-xs font-medium ${cls}`}>{price.close.toFixed(2)}</td>
     <td className={`text-center px-2 py-2 text-xs font-medium ${cls}`}>{isPos ? '+' : ''}{price.change.toFixed(2)}</td>
@@ -82,7 +82,7 @@ function PriceCell({ price }: { price?: PriceInfo | null }) {
 }
 
 function SortIcon({ col, sortKey, sortDir }: { col: string; sortKey: SortKey; sortDir: SortDir }) {
-  if (sortKey !== col) return <ChevronsUpDown className="w-3 h-3 inline ml-0.5 text-slate-400" />
+  if (sortKey !== col) return <ChevronsUpDown className="w-3 h-3 inline ml-0.5 text-slate-600" />
   if (sortDir === 'desc') return <ChevronDown className="w-3 h-3 inline ml-0.5 text-primary-600" />
   return <ChevronUp className="w-3 h-3 inline ml-0.5 text-primary-600" />
 }
@@ -110,20 +110,20 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
   hasPrice: boolean
 }) {
   const thClass = (col: SortKey) =>
-    `text-center px-2 py-2 text-slate-500 font-medium whitespace-nowrap cursor-pointer hover:text-primary-600 select-none ${sortKey === col ? 'text-primary-600' : ''}`
+    `text-center px-2 py-2 text-slate-700 font-medium whitespace-nowrap cursor-pointer hover:text-primary-600 select-none ${sortKey === col ? 'text-primary-600' : ''}`
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="bg-slate-50 border-b border-slate-200">
-            <th className="text-left px-3 py-2 text-slate-500 font-medium w-8 cursor-pointer hover:text-primary-600 select-none" onClick={() => onSort('rank')}>
+            <th className="text-left px-3 py-2 text-slate-700 font-medium w-8 cursor-pointer hover:text-primary-600 select-none" onClick={() => onSort('rank')}>
               # <SortIcon col="rank" sortKey={sortKey} sortDir={sortDir} />
             </th>
-            <th className="text-left px-3 py-2 text-slate-500 font-medium cursor-pointer hover:text-primary-600 select-none" onClick={() => onSort('stock_code')}>
+            <th className="text-left px-3 py-2 text-slate-700 font-medium cursor-pointer hover:text-primary-600 select-none" onClick={() => onSort('stock_code')}>
               股票代號/名稱 <SortIcon col="stock_code" sortKey={sortKey} sortDir={sortDir} />
             </th>
-            <th className="text-left px-3 py-2 text-slate-500 font-medium hidden md:table-cell cursor-pointer hover:text-primary-600 select-none" onClick={() => onSort('industry')}>
+            <th className="text-left px-3 py-2 text-slate-700 font-medium hidden md:table-cell cursor-pointer hover:text-primary-600 select-none" onClick={() => onSort('industry')}>
               類別 <SortIcon col="industry" sortKey={sortKey} sortDir={sortDir} />
             </th>
             {weekDates.map(d => (
@@ -151,7 +151,7 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
             const isTotalNeg = row.total_change < 0
             return (
               <tr key={row.stock_code} className="hover:bg-slate-50 transition-colors">
-                <td className="px-3 py-2 text-slate-400 text-xs text-center">{startIndex + idx + 1}</td>
+                <td className="px-3 py-2 text-slate-600 text-xs text-center">{startIndex + idx + 1}</td>
                 <td className="px-3 py-2">
                   <Link href={`/stock/${row.stock_code}`} className="flex items-center gap-2 group">
                     <div>
@@ -160,9 +160,9 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
                     </div>
                   </Link>
                 </td>
-                <td className="px-3 py-2 text-slate-500 text-xs hidden md:table-cell">{row.industry || '—'}</td>
+                <td className="px-3 py-2 text-slate-700 text-xs hidden md:table-cell">{row.industry || '—'}</td>
                 {weekDates.map(d => <ChangeCell key={d} value={row.week_changes[d]} />)}
-                <td className={`text-center px-2 py-2 text-xs font-bold ${isTotalPos ? 'text-red-600' : isTotalNeg ? 'text-green-600' : 'text-slate-400'}`}>
+                <td className={`text-center px-2 py-2 text-xs font-bold ${isTotalPos ? 'text-red-600' : isTotalNeg ? 'text-green-600' : 'text-slate-600'}`}>
                   {row.total_change > 0 ? '+' : ''}{row.total_change.toFixed(2)}
                 </td>
                 <td className="text-center px-2 py-2 text-slate-700 text-xs font-medium">{row.latest_ratio.toFixed(2)}%</td>
@@ -192,14 +192,14 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
   }
 
   if (isLoading) return (
-    <div className="p-8 text-center text-slate-400">
+    <div className="p-8 text-center text-slate-600">
       <div className="animate-spin w-8 h-8 border-2 border-primary-300 border-t-primary-600 rounded-full mx-auto mb-4" />
       <p>載入大股東籌碼資料中...</p>
     </div>
   )
 
   if (error || !data) return (
-    <div className="p-8 text-center text-slate-400">
+    <div className="p-8 text-center text-slate-600">
       <TrendingDown className="w-12 h-12 mx-auto mb-3 opacity-30" />
       <p className="font-medium">暫無資料</p>
       <p className="text-sm mt-1">請確認 API 服務正常</p>
@@ -255,13 +255,13 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
     downloadCSV(`籌碼分析_${tabName}_${new Date().toISOString().slice(0,10)}.csv`, headers, csvRows)
   }
 
-  if (sortedRows.length === 0) return <div className="p-8 text-center text-slate-400"><p>找不到符合條件的股票</p></div>
+  if (sortedRows.length === 0) return <div className="p-8 text-center text-slate-600"><p>找不到符合條件的股票</p></div>
 
   return (
     <div className="overflow-hidden">
       {/* Download toolbar */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50">
-        <span className="text-xs text-slate-500">共 {sortedRows.length} 檔</span>
+        <span className="text-xs text-slate-700">共 {sortedRows.length} 檔</span>
         <button onClick={handleDownload} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 hover:text-primary-600 hover:bg-white rounded border border-slate-200 hover:border-primary-300 transition-colors">
           <Download className="w-3.5 h-3.5" />CSV 下載
         </button>
