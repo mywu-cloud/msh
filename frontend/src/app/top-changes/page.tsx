@@ -114,6 +114,14 @@ function ScreenerWithSave({ market }: { market: Market }) {
     `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=12&include_price=1`,
     fetcher,
     { revalidateOnFocus: false }
+
+  const { data: pricesData } = useSWR<{ trade_date: string; data: Record<string, { close: number; change: number; change_pct: number }> }>(
+    `${API_BASE}/api/prices`,
+    fetcher,
+    { revalidateOnFocus: false, refreshInterval: 3600000 }
+  )
+  const priceMap = pricesData?.data || {}
+  const priceDate = pricesData?.trade_date ? (pricesData.trade_date.slice(4,6) + '/' + pricesData.trade_date.slice(6,8)) : ''
   )
 
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
@@ -136,7 +144,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
       idx + 1, row.stock_code, row.stock_name || '', row.industry || '',
       ...recentDates.map(d => row.week_changes[d] ?? ''),
       row.total_change, row.latest_ratio, row.score,
-      row.price?.close ?? '', row.price?.change_pct ?? '',
+      (priceMap[row.stock_code] || row.price)?.close ?? '', (priceMap[row.stock_code] || row.price)?.change_pct ?? '',
       getDivergenceAlert(row) || ''
     ])
     downloadCSV(`起漲潛力Top20_${market}_${new Date().toISOString().slice(0,10)}.csv`, headers, csvRows)
@@ -153,7 +161,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
         stocks: scored.map(r => ({
           stock_code: r.stock_code, stock_name: r.stock_name, industry: r.industry,
           score: r.score, total_change: r.total_change, latest_ratio: r.latest_ratio,
-          latest_change: r.latest_change, close_price: r.price?.close, change_pct: r.price?.change_pct
+          latest_change: r.latest_change, close_price: (priceMap[r.stock_code] || r.price)?.close, change_pct: (priceMap[r.stock_code] || r.price)?.change_pct
         }))
       }
       const res = await fetch(`${API_BASE}/api/screener-snapshot`, {
@@ -199,13 +207,14 @@ function ScreenerWithSave({ market }: { market: Market }) {
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">累計</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">持有%</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">評分</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs hidden md:table-cell">收盤</th>
+              <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs hidden md:table-cell">{priceDate ? priceDate + ' 收盤' : '收盤'}</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs hidden md:table-cell">漲跌%</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">信號</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {scored.map((row, idx) => {
+              const rowPrice = priceMap[row.stock_code] || row.price || null
               const alert = getDivergenceAlert(row)
               return (
                 <tr key={row.stock_code} className="hover:bg-slate-50 transition-colors">
@@ -225,9 +234,9 @@ function ScreenerWithSave({ market }: { market: Market }) {
                       <Star className="w-3 h-3" />{row.score}
                     </span>
                   </td>
-                  <td className="text-center px-2 py-2 text-xs hidden md:table-cell">{row.price?.close ? row.price.close.toFixed(2) : '—'}</td>
-                  <td className={clsx('text-center px-2 py-2 text-xs hidden md:table-cell', row.price && row.price.change_pct > 0 ? 'text-red-600' : row.price && row.price.change_pct < 0 ? 'text-green-600' : 'text-slate-400')}>
-                    {row.price?.change_pct != null ? (row.price.change_pct > 0 ? '+' : '') + row.price.change_pct.toFixed(2) + '%' : '—'}
+                  <td className="text-center px-2 py-2 text-xs hidden md:table-cell">{rowPrice?.close ? rowPrice.close.toFixed(2) : '—'}</td>
+                  <td className={clsx('text-center px-2 py-2 text-xs hidden md:table-cell', rowPrice && rowPrice.change_pct > 0 ? 'text-red-600' : rowPrice && rowPrice.change_pct < 0 ? 'text-green-600' : 'text-slate-400')}>
+                    {rowPrice?.change_pct != null ? (rowPrice.change_pct > 0 ? '+' : '') + rowPrice.change_pct.toFixed(2) + '%' : '—'}
                   </td>
                   <td className="text-center px-2 py-2 text-xs">
                     {alert ? <span className={clsx('inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium whitespace-nowrap', alert.includes('買進') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600')}>{alert.includes('買進') ? <Flame className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}{alert}</span> : '—'}
