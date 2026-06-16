@@ -104,7 +104,7 @@ function shouldInclude(r: BHRow | StockChange): boolean {
   const industry = (r as BHRow).industry || (r as StockChange).industry || ''
   if (!(industry && industry.trim())) return false
   if (industry === '存托憑證') return false
-  if (name.endsWith('創') || name.endsWith('特')) return false
+  if (name.endsWith('-創') || name.endsWith('-特')) return false
   return true
 }
 
