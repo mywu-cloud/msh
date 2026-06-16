@@ -61,7 +61,7 @@ function shouldInclude(row: BigHolderRow): boolean {
   if (!hasIndustry(row)) return false
   if (row.industry === '存托憑證') return false
   const name = row.stock_name || ''
-  if (name.endsWith('創') || name.endsWith('特')) return false
+  if (name.endsWith('-創') || name.endsWith('-特')) return false
   return true
 }
 
