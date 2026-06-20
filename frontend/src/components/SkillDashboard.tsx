@@ -62,8 +62,12 @@ function shouldInclude(row: BigHolderRow): boolean {
   if (row.industry === 'ETF') return false
   if (row.industry === '存託憑證' || row.industry === '存托憑證') return false
   if (row.industry === '創新板股票' || row.industry === '創新版') return false
+  if (row.industry === '已下市' || row.industry === '特別股') return false
+  const code = row.stock_code || ''
+  if (/^\d{4}[A-Z]/.test(code)) return false
   const name = row.stock_name || ''
   if (name.endsWith('-創') || name.endsWith('-特')) return false
+  if (/[創特]$/.test(name)) return false
   return true
 }
 
@@ -168,7 +172,7 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
             return (
               <tr key={row.stock_code} className="hover:bg-slate-50 transition-colors">
                 <td className="px-3 py-2 text-slate-600 text-xs text-center">{startIndex + idx + 1}</td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2 whitespace-nowrap">
                   <Link href={`/stock/${row.stock_code}`} className="flex items-center gap-2 group">
                     <div>
                       <span className="font-mono font-semibold text-slate-800 group-hover:text-primary-600">{row.stock_code}</span>
