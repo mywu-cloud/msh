@@ -293,8 +293,7 @@ h1, h2, h3, h4, h5, h6 {
     font-size: 14px;
   }
   /* Industry column: keep nowrap but use 13px to save horizontal space */
-  td.whitespace-nowrap.text-xs,
-  th.whitespace-nowrap {
+  td.whitespace-nowrap.text-xs {
     font-size: 13px !important;
   }
 }
