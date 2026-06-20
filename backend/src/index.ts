@@ -215,9 +215,13 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
     let priceMap = new Map<string, PriceInfo>();
     if (includePrice) {
       try {
-        const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices()]);
-        for (const [k, v] of twsePrices) priceMap.set(k, v);
-        for (const [k, v] of tpexPrices) priceMap.set(k, v);
+        const priceRows = await env.DB.prepare(
+          'SELECT stock_code, close, change, change_pct FROM stock_prices ORDER BY trade_date DESC'
+        ).all();
+        for (const row of priceRows.results || []) {
+          const r = row as { stock_code: string; close: number; change: number; change_pct: number };
+          if (r.close > 0) priceMap.set(r.stock_code, { close: r.close, change: r.change, change_pct: r.change_pct });
+        }
       } catch (e) { console.error("price fetch error:", e); }
     }
 
