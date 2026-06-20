@@ -551,8 +551,7 @@ async function handleStockDetail(request: Request, env: Env, stockCode: string):
     const total_holders = latestRow.total_holders || 0;
     let price = null;
     try {
-      const tpexStockCodes = topResult.filter((r: { market?: string }) => r.market === 'tpex').map((r: { stock_code: string }) => r.stock_code);
-        const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices(tpexStockCodes)]);
+      const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices()]);
       price = twsePrices.get(code) || tpexPrices.get(code) || null;
     } catch(e) { /* ignore */ }
     const responseData = {
