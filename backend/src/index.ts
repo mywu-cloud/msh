@@ -64,34 +64,39 @@ async function fetchTwsePrices(): Promise<Map<string, PriceInfo>> {
   return result;
 }
 
-async function fetchTpexPrices(): Promise<Map<string, PriceInfo>> {
+async function fetchTpexPrices(codes?: string[]): Promise<Map<string, PriceInfo>> {
   const result = new Map<string, PriceInfo>();
+  if (!codes || codes.length === 0) return result;
   try {
-    const res = await fetch(TPEX_PRICE_API, {
-      headers: { "User-Agent": "MSH-API/2.0", "Cache-Control": "no-cache" },
-      cf: { cacheTtl: 0, cacheEverything: false },
-    });
-    if (!res.ok) return result;
-    const data = await res.json() as Array<{
-      SecuritiesCompanyCode: string; Close: string; Change: string;
-    }>;
-    for (const row of data) {
-      const close = parseFloat(row.Close?.replace(/,/g, "") || "0");
-      const change = parseFloat(row.Change?.replace(/[+,]/g, "") || "0");
-      const prev = close - change;
-      const change_pct = prev > 0 ? Math.round((change / prev) * 10000) / 100 : 0;
-      const code = (row.SecuritiesCompanyCode || "").trim();
-      if (close > 0 && code) {
-        result.set(code, { close: Math.round(close * 100) / 100, change: Math.round(change * 100) / 100, change_pct });
-      }
+    // Yahoo Finance bulk quote - batch in groups of 50
+    const batchSize = 50;
+    for (let i = 0; i < codes.length; i += batchSize) {
+      const batch = codes.slice(i, i + batchSize);
+      const symbols = batch.map(c => c + '.TWO').join(',');
+      const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent&lang=en-US&region=US`;
+      try {
+        const res = await fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MSH-API/2.0)' },
+          cf: { cacheTtl: 60, cacheEverything: true },
+        });
+        if (!res.ok) continue;
+        const data = await res.json() as { quoteResponse?: { result?: Array<{ symbol: string; regularMarketPrice?: number; regularMarketChange?: number; regularMarketChangePercent?: number }> } };
+        for (const q of data.quoteResponse?.result || []) {
+          const code = q.symbol.replace('.TWO', '');
+          const close = q.regularMarketPrice || 0;
+          const change = Math.round((q.regularMarketChange || 0) * 100) / 100;
+          const change_pct = Math.round((q.regularMarketChangePercent || 0) * 100) / 100;
+          if (close > 0) result.set(code, { close, change, change_pct });
+        }
+      } catch(_e) { /* skip failed batch */ }
     }
   } catch (e) {
-    console.error("fetchTpexPrices error:", e);
+    console.error('fetchTpexPrices error:', e);
   }
   return result;
 }
 
-// ─── Init DB tables ──────────────────────────────────────────────────────────
+
 async function initDb(env: Env): Promise<void> {
   try {
     await env.DB.prepare(`
@@ -546,7 +551,8 @@ async function handleStockDetail(request: Request, env: Env, stockCode: string):
     const total_holders = latestRow.total_holders || 0;
     let price = null;
     try {
-      const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices()]);
+      const tpexStockCodes = topResult.filter((r: { market?: string }) => r.market === 'tpex').map((r: { stock_code: string }) => r.stock_code);
+        const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices(tpexStockCodes)]);
       price = twsePrices.get(code) || tpexPrices.get(code) || null;
     } catch(e) { /* ignore */ }
     const responseData = {
@@ -863,7 +869,12 @@ async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; m
     console.log('Final trade date:', tradeDate, 'Today TW:', todayTW);
 
         // ── Step 2: Fetch prices from TWSE + TPEX ────────────────────────────────
-    const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices()]);
+    // Get tpex stock codes for Yahoo Finance fetch
+    const tpexCodesResult = await env.DB.prepare(
+      "SELECT DISTINCT stock_code FROM holder_data WHERE market = 'tpex' LIMIT 1000"
+    ).all();
+    const allTpexCodes = (tpexCodesResult.results || []).map((r: { stock_code: string }) => r.stock_code);
+    const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices(allTpexCodes)]);
     const allPrices = new Map<string, PriceInfo>();
     for (const [k, v] of twsePrices) allPrices.set(k, v);
     for (const [k, v] of tpexPrices) allPrices.set(k, v);
