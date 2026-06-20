@@ -1004,15 +1004,16 @@ export default {
     }
         if (path === "/api/prices" || path === "/api/prices/") return handleGetPrices(request, env);
     if (path === "/api/refresh-prices" || path === "/api/refresh-prices/") return handleRefreshPrices(request, env);
-    // Debug: proxy TPEX API
+    // Debug: test Finmind tpex price fetch
     if (path === '/api/debug/tpex') {
       try {
-        const r = await fetch('https://www.tpex.org.tw/openapi/v1/exchangeReport/DAILY_CLOSE_QUOTES', {
-          headers: { 'User-Agent': 'MSH-API/2.0' }, cf: { cacheTtl: 0, cacheEverything: false }
-        });
-        if (!r.ok) return jsonResponse({ error: 'tpex api failed', status: r.status });
-        const d = await r.json() as unknown[];
-        return jsonResponse({ total: d.length, sample: d.slice(0, 3), fields: d[0] ? Object.keys(d[0] as object) : [] });
+        const token = env.FINMIND_TOKEN || '';
+        const today = new Date().toISOString().slice(0,10);
+        const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&stock_id=8093&start_date=${today}&end_date=${today}&token=${token}`;
+        const r = await fetch(url, { headers: { 'User-Agent': 'MSH-API/2.0' } });
+        if (!r.ok) return jsonResponse({ error: 'finmind api failed', status: r.status, url });
+        const d = await r.json() as { data?: unknown[]; status?: number };
+        return jsonResponse({ status: r.status, finmindStatus: d.status, records: d.data?.length || 0, sample: (d.data || []).slice(0, 2), fields: d.data?.[0] ? Object.keys(d.data[0] as object) : [] });
       } catch(e: unknown) { return jsonResponse({ error: String(e) }); }
     }
         return errorResponse("Not found", 404);
