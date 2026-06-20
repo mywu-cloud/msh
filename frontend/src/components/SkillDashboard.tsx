@@ -59,7 +59,9 @@ function hasIndustry(row: BigHolderRow): boolean {
 }
 function shouldInclude(row: BigHolderRow): boolean {
   if (!hasIndustry(row)) return false
-  if (row.industry === '存托憑證') return false
+  if (row.industry === 'ETF') return false
+  if (row.industry === '存託憑證' || row.industry === '存托憑證') return false
+  if (row.industry === '創新板股票' || row.industry === '創新版') return false
   const name = row.stock_name || ''
   if (name.endsWith('-創') || name.endsWith('-特')) return false
   return true
