@@ -204,7 +204,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
             <tr className="bg-slate-50 border-b border-slate-200">
               <th className="text-left px-3 py-2 text-slate-500 font-medium w-8">#</th>
               <th className="text-left px-3 py-2 text-slate-500 font-medium">股票</th>
-              <th className="text-left px-3 py-2 text-slate-500 font-medium hidden md:table-cell">產業</th>
+              <th className="text-left px-3 py-2 text-slate-500 font-medium hidden md:table-cell whitespace-nowrap">產業</th>
               {displayDates.map(d => <th key={d} className="text-center px-2 py-2 text-slate-500 font-medium text-xs">{formatDate(d)}</th>)}
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">累計</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">持有%</th>
@@ -227,7 +227,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
                       {row.stock_name && <span className="ml-1.5 text-slate-500 text-xs">{row.stock_name}</span>}
                     </Link>
                   </td>
-                  <td className="px-3 py-2 text-slate-500 text-xs hidden md:table-cell">{row.industry || '—'}</td>
+                  <td className="px-3 py-2 text-slate-500 text-xs hidden md:table-cell whitespace-nowrap">{row.industry || '—'}</td>
                   {displayDates.map(d => <ChangeCell key={d} value={row.week_changes[d]} />)}
                   <td className="text-center px-2 py-2 text-xs font-bold text-red-600">+{row.total_change.toFixed(2)}</td>
                   <td className="text-center px-2 py-2 text-xs text-slate-700">{row.latest_ratio.toFixed(2)}%</td>
