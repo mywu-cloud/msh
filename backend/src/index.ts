@@ -220,12 +220,21 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
     let priceMap = new Map<string, PriceInfo>();
     if (includePrice) {
       try {
+        // Step 1: Load TWSE prices from D1 stock_prices table
         const priceRows = await env.DB.prepare(
           'SELECT stock_code, close, change, change_pct FROM stock_prices ORDER BY trade_date DESC'
         ).all();
         for (const row of priceRows.results || []) {
           const r = row as { stock_code: string; close: number; change: number; change_pct: number };
           if (r.close > 0) priceMap.set(r.stock_code, { close: r.close, change: r.change, change_pct: r.change_pct });
+        }
+        // Step 2: Fetch tpex prices live from Yahoo Finance for stocks not in D1
+        const tpexCodes = topResult
+          .filter((r: { market?: string; stock_code: string }) => r.market === 'tpex' && !priceMap.has(r.stock_code))
+          .map((r: { stock_code: string }) => r.stock_code);
+        if (tpexCodes.length > 0) {
+          const tpexPrices = await fetchTpexPrices(tpexCodes);
+          for (const [k, v] of tpexPrices) priceMap.set(k, v);
         }
       } catch (e) { console.error("price fetch error:", e); }
     }
