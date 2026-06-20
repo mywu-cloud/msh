@@ -1004,7 +1004,18 @@ export default {
     }
         if (path === "/api/prices" || path === "/api/prices/") return handleGetPrices(request, env);
     if (path === "/api/refresh-prices" || path === "/api/refresh-prices/") return handleRefreshPrices(request, env);
-    return errorResponse("Not found", 404);
+    // Debug: proxy TPEX API
+    if (path === '/api/debug/tpex') {
+      try {
+        const r = await fetch('https://www.tpex.org.tw/openapi/v1/exchangeReport/DAILY_CLOSE_QUOTES', {
+          headers: { 'User-Agent': 'MSH-API/2.0' }, cf: { cacheTtl: 0, cacheEverything: false }
+        });
+        if (!r.ok) return jsonResponse({ error: 'tpex api failed', status: r.status });
+        const d = await r.json() as unknown[];
+        return jsonResponse({ total: d.length, sample: d.slice(0, 3), fields: d[0] ? Object.keys(d[0] as object) : [] });
+      } catch(e: unknown) { return jsonResponse({ error: String(e) }); }
+    }
+        return errorResponse("Not found", 404);
   },
 
   async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
