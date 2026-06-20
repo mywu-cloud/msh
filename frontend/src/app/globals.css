@@ -268,16 +268,14 @@ h1, h2, h3, h4, h5, h6 {
 .text-slate-500 { color: #475569 !important; }
 
 /* ─── Desktop font minimum 14px ─────────────────────────── */
-@media (min-width: 1024px) {
-  * {
-    min-font-size: 14px;
-  }
+@media (min-width: 768px) {
   html {
     font-size: 14px;
   }
-  .text-xs, [class*="text-xs"] {
+  /* Override Tailwind text-xs (normally 13px) to 14px on desktop */
+  .text-xs {
     font-size: 14px !important;
-    line-height: 1.5;
+    line-height: 1.5 !important;
   }
   .data-table th {
     font-size: 14px;
