@@ -68,35 +68,34 @@ async function fetchTpexPrices(codes?: string[]): Promise<Map<string, PriceInfo>
   const result = new Map<string, PriceInfo>();
   if (!codes || codes.length === 0) return result;
   try {
-    // Yahoo Finance bulk quote - batch in groups of 50
-    const batchSize = 50;
-    for (let i = 0; i < codes.length; i += batchSize) {
-      const batch = codes.slice(i, i + batchSize);
-      const symbols = batch.map(c => c + '.TWO').join(',');
-      const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent&lang=en-US&region=US`;
-      try {
-        const res = await fetch(url, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MSH-API/2.0)' },
-          cf: { cacheTtl: 60, cacheEverything: true },
-        });
-        if (!res.ok) continue;
-        const data = await res.json() as { quoteResponse?: { result?: Array<{ symbol: string; regularMarketPrice?: number; regularMarketChange?: number; regularMarketChangePercent?: number }> } };
-        for (const q of data.quoteResponse?.result || []) {
-          const code = q.symbol.replace('.TWO', '');
-          const close = q.regularMarketPrice || 0;
-          const change = Math.round((q.regularMarketChange || 0) * 100) / 100;
-          const change_pct = Math.round((q.regularMarketChangePercent || 0) * 100) / 100;
+    // Yahoo Finance v8 single-stock API works from CF Workers; fetch in parallel batches
+    const PARALLEL = 10; // max concurrent requests
+    for (let i = 0; i < codes.length; i += PARALLEL) {
+      const batch = codes.slice(i, i + PARALLEL);
+      const promises = batch.map(async (code) => {
+        try {
+          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}.TWO?interval=1d&range=1d`;
+          const res = await fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MSH-API/2.0)' },
+            cf: { cacheTtl: 60, cacheEverything: true },
+          });
+          if (!res.ok) return;
+          const data = await res.json() as { chart?: { result?: Array<{ meta?: { regularMarketPrice?: number; regularMarketChange?: number; regularMarketChangePercent?: number } }> } };
+          const meta = data.chart?.result?.[0]?.meta;
+          if (!meta) return;
+          const close = meta.regularMarketPrice || 0;
+          const change = Math.round((meta.regularMarketChange || 0) * 100) / 100;
+          const change_pct = Math.round((meta.regularMarketChangePercent || 0) * 100) / 100;
           if (close > 0) result.set(code, { close, change, change_pct });
-        }
-      } catch(_e) { /* skip failed batch */ }
+        } catch (_e) { /* skip failed code */ }
+      });
+      await Promise.all(promises);
     }
   } catch (e) {
     console.error('fetchTpexPrices error:', e);
   }
   return result;
 }
-
-
 async function initDb(env: Env): Promise<void> {
   try {
     await env.DB.prepare(`
@@ -220,25 +219,15 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
     let priceMap = new Map<string, PriceInfo>();
     if (includePrice) {
       try {
-        // Step 1: Load TWSE prices from D1 stock_prices table
         const priceRows = await env.DB.prepare(
           'SELECT stock_code, close, change, change_pct FROM stock_prices ORDER BY trade_date DESC'
         ).all();
         for (const row of priceRows.results || []) {
           const r = row as { stock_code: string; close: number; change: number; change_pct: number };
-          if (r.close > 0) priceMap.set(r.stock_code, { close: r.close, change: r.change, change_pct: r.change_pct });
-        }
-        // Step 2: Fetch tpex prices live from Yahoo Finance for stocks not in D1
-        const tpexCodes = topResult
-          .filter((r: { market?: string; stock_code: string }) => r.market === 'tpex' && !priceMap.has(r.stock_code))
-          .map((r: { stock_code: string }) => r.stock_code);
-        if (tpexCodes.length > 0) {
-          const tpexPrices = await fetchTpexPrices(tpexCodes);
-          for (const [k, v] of tpexPrices) priceMap.set(k, v);
+          if (r.close > 0 && !priceMap.has(r.stock_code)) priceMap.set(r.stock_code, { close: r.close, change: r.change, change_pct: r.change_pct });
         }
       } catch (e) { console.error("price fetch error:", e); }
     }
-
     const finalData = topResult.map(r => ({ ...r, price: priceMap.get(r.stock_code) || null }));
     const responseData = { meta: { market, limit, sort, weeks: weekDates.length, week_dates: weekDates, count: finalData.length, generated_at: new Date().toISOString() }, data: finalData };
     const responseText = JSON.stringify(responseData);
@@ -560,9 +549,23 @@ async function handleStockDetail(request: Request, env: Env, stockCode: string):
     const total_holders = latestRow.total_holders || 0;
     let price = null;
     try {
-      const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices()]);
-      price = twsePrices.get(code) || tpexPrices.get(code) || null;
-    } catch(e) { /* ignore */ }
+      // First try D1 stock_prices table (covers both TWSE and TPEX from scheduled job)
+      const priceRow = await env.DB.prepare(
+        'SELECT close, change, change_pct FROM stock_prices WHERE stock_code = ? ORDER BY trade_date DESC LIMIT 1'
+      ).bind(code).first() as { close: number; change: number; change_pct: number } | null;
+      if (priceRow && priceRow.close > 0) {
+        price = { close: priceRow.close, change: priceRow.change, change_pct: priceRow.change_pct };
+      } else {
+        // Fall back to live TWSE API (for TWSE stocks not yet in D1)
+        const twsePrices = await fetchTwsePrices();
+        price = twsePrices.get(code) || null;
+        // If still not found and looks like TPEX code range, try Yahoo Finance
+        if (!price && /^[456789]/.test(code)) {
+          const tpexPrices = await fetchTpexPrices([code]);
+          price = tpexPrices.get(code) || null;
+        }
+      }
+    } catch(e) { console.error('price fetch for stock detail error:', e); }
     const responseData = {
       stock_code: code, stock_name: stockName, market, industry,
       big_holder_trend, mid_holder_trend, small_holder_trend, total_holders,
@@ -879,7 +882,7 @@ async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; m
         // ── Step 2: Fetch prices from TWSE + TPEX ────────────────────────────────
     // Get tpex stock codes for Yahoo Finance fetch
     const tpexCodesResult = await env.DB.prepare(
-      "SELECT DISTINCT stock_code FROM holder_data WHERE market = 'tpex' LIMIT 1000"
+      "SELECT DISTINCT stock_code FROM stock_info WHERE market = 'tpex' LIMIT 500"
     ).all();
     const allTpexCodes = (tpexCodesResult.results || []).map((r: { stock_code: string }) => r.stock_code);
     const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices(allTpexCodes)]);
@@ -1023,26 +1026,7 @@ export default {
     }
         if (path === "/api/prices" || path === "/api/prices/") return handleGetPrices(request, env);
     if (path === "/api/refresh-prices" || path === "/api/refresh-prices/") return handleRefreshPrices(request, env);
-    // Debug: test Yahoo Finance v7 bulk API for tpex stocks
-    if (path === '/api/debug/tpex') {
-      const results: Record<string, unknown> = {};
-      // Test v7 bulk quote for multiple tpex stocks
-      try {
-        const symbols = '3147.TWO,4513.TWO,8093.TWO';
-        const yUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent`;
-        const yr = await fetch(yUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MSH-API/2.0)' } });
-        const yd = await yr.json() as { quoteResponse?: { result?: Array<{ symbol: string; regularMarketPrice?: number; regularMarketChange?: number; regularMarketChangePercent?: number; quoteType?: string }> } };
-        results['v7_bulk'] = { status: yr.status, count: yd.quoteResponse?.result?.length || 0, data: (yd.quoteResponse?.result || []).map(q => ({ sym: q.symbol, price: q.regularMarketPrice, change: q.regularMarketChange })) };
-      } catch(e) { results['v7_bulk'] = { error: String(e) }; }
-      // Also test v8 single for comparison
-      try {
-        const yr2 = await fetch('https://query1.finance.yahoo.com/v8/finance/chart/8093.TWO?interval=1d&range=1d', { headers: { 'User-Agent': 'Mozilla/5.0 (compatible)' } });
-        const yd2 = await yr2.json() as { chart?: { result?: Array<{ meta?: { regularMarketPrice?: number } }> } };
-        results['v8_single'] = { status: yr2.status, price: yd2.chart?.result?.[0]?.meta?.regularMarketPrice };
-      } catch(e) { results['v8_single'] = { error: String(e) }; }
-      return jsonResponse(results);
-    }
-        return errorResponse("Not found", 404);
+    return errorResponse("Not found", 404);
   },
 
   async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
