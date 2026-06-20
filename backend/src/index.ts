@@ -1023,16 +1023,23 @@ export default {
     }
         if (path === "/api/prices" || path === "/api/prices/") return handleGetPrices(request, env);
     if (path === "/api/refresh-prices" || path === "/api/refresh-prices/") return handleRefreshPrices(request, env);
-    // Debug: test alternative tpex price sources
+    // Debug: test Yahoo Finance v7 bulk API for tpex stocks
     if (path === '/api/debug/tpex') {
       const results: Record<string, unknown> = {};
-      // Test 1: Yahoo Finance for tpex stock 8093.TWO
+      // Test v7 bulk quote for multiple tpex stocks
       try {
-        const yUrl = 'https://query1.finance.yahoo.com/v8/finance/chart/8093.TWO?interval=1d&range=1d';
-        const yr = await fetch(yUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible)' } });
-        const yd = await yr.json() as { chart?: { result?: Array<{ meta?: { regularMarketPrice?: number; regularMarketChange?: number; chartPreviousClose?: number } }> } };
-        results['yahoo'] = { status: yr.status, price: yd.chart?.result?.[0]?.meta?.regularMarketPrice, fields: yd.chart?.result?.[0] ? Object.keys(yd.chart.result[0]) : [] };
-      } catch(e) { results['yahoo'] = { error: String(e) }; }
+        const symbols = '3147.TWO,4513.TWO,8093.TWO';
+        const yUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent`;
+        const yr = await fetch(yUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MSH-API/2.0)' } });
+        const yd = await yr.json() as { quoteResponse?: { result?: Array<{ symbol: string; regularMarketPrice?: number; regularMarketChange?: number; regularMarketChangePercent?: number; quoteType?: string }> } };
+        results['v7_bulk'] = { status: yr.status, count: yd.quoteResponse?.result?.length || 0, data: (yd.quoteResponse?.result || []).map(q => ({ sym: q.symbol, price: q.regularMarketPrice, change: q.regularMarketChange })) };
+      } catch(e) { results['v7_bulk'] = { error: String(e) }; }
+      // Also test v8 single for comparison
+      try {
+        const yr2 = await fetch('https://query1.finance.yahoo.com/v8/finance/chart/8093.TWO?interval=1d&range=1d', { headers: { 'User-Agent': 'Mozilla/5.0 (compatible)' } });
+        const yd2 = await yr2.json() as { chart?: { result?: Array<{ meta?: { regularMarketPrice?: number } }> } };
+        results['v8_single'] = { status: yr2.status, price: yd2.chart?.result?.[0]?.meta?.regularMarketPrice };
+      } catch(e) { results['v8_single'] = { error: String(e) }; }
       return jsonResponse(results);
     }
         return errorResponse("Not found", 404);
