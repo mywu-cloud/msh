@@ -106,7 +106,10 @@ function shouldInclude(r: BHRow | StockChange): boolean {
   if (industry === 'ETF') return false
   if (industry === '存託憑證' || industry === '存托憑證') return false
   if (industry === '創新板股票' || industry === '創新版') return false
+  if (industry === '已下市' || industry === '特別股') return false
+  if (/^\d{4}[A-Z]/.test(code)) return false
   if (name.endsWith('-創') || name.endsWith('-特')) return false
+  if (/[創特]$/.test(name)) return false
   return true
 }
 
