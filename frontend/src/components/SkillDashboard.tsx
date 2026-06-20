@@ -139,7 +139,7 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
             <th className="text-left px-3 py-2 text-slate-700 font-medium cursor-pointer hover:text-primary-600 select-none" onClick={() => onSort('stock_code')}>
               股票代號/名稱 <SortIcon col="stock_code" sortKey={sortKey} sortDir={sortDir} />
             </th>
-            <th className="text-left px-3 py-2 text-slate-700 font-medium hidden md:table-cell cursor-pointer hover:text-primary-600 select-none" onClick={() => onSort('industry')}>
+            <th className="text-left px-3 py-2 text-slate-700 font-medium hidden md:table-cell cursor-pointer hover:text-primary-600 select-none whitespace-nowrap" onClick={() => onSort('industry')}>
               類別 <SortIcon col="industry" sortKey={sortKey} sortDir={sortDir} />
             </th>
             {weekDates.map(d => (
@@ -176,7 +176,7 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
                     </div>
                   </Link>
                 </td>
-                <td className="px-3 py-2 text-slate-700 text-xs hidden md:table-cell">{row.industry || '—'}</td>
+                <td className="px-3 py-2 text-slate-700 text-xs hidden md:table-cell whitespace-nowrap">{row.industry || '—'}</td>
                 {weekDates.map(d => <ChangeCell key={d} value={row.week_changes[d]} />)}
                 <td className={`text-center px-2 py-2 text-xs font-bold ${isTotalPos ? 'text-red-600' : isTotalNeg ? 'text-green-600' : 'text-slate-600'}`}>
                   {row.total_change > 0 ? '+' : ''}{row.total_change.toFixed(2)}
