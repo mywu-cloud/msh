@@ -262,7 +262,36 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* ─── Global text readability ────────────────────────────── */
-/* Ensure minimum 13px for all text, deepen light colors */
+/* Ensure minimum 14px for all text on desktop, deepen light colors */
 .text-slate-300 { color: #94a3b8 !important; }
 .text-slate-400 { color: #64748b !important; }
 .text-slate-500 { color: #475569 !important; }
+
+/* ─── Desktop font minimum 14px ─────────────────────────── */
+@media (min-width: 1024px) {
+  * {
+    min-font-size: 14px;
+  }
+  html {
+    font-size: 14px;
+  }
+  .text-xs, [class*="text-xs"] {
+    font-size: 14px !important;
+    line-height: 1.5;
+  }
+  .data-table th {
+    font-size: 14px;
+  }
+  .data-table td {
+    font-size: 14px;
+  }
+  .badge-up, .badge-down {
+    font-size: 14px;
+  }
+  .surge-badge {
+    font-size: 14px;
+  }
+  [data-tooltip]:hover::after {
+    font-size: 14px;
+  }
+}
