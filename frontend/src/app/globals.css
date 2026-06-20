@@ -272,7 +272,7 @@ h1, h2, h3, h4, h5, h6 {
   html {
     font-size: 14px;
   }
-  /* Override Tailwind text-xs (normally 13px) to 14px on desktop */
+  /* Override Tailwind text-xs (13px) to 14px on desktop */
   .text-xs {
     font-size: 14px !important;
     line-height: 1.5 !important;
