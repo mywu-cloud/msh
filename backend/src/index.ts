@@ -835,6 +835,17 @@ async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; m
     const todayTW = twNow0.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD today in TW
     const twHour = twNow0.getUTCHours(); // hour in TW time
     let tradeDate = '';
+    // Fetch trading date directly from TWSE (most reliable)
+    try {
+      const twseDate = await fetch('https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json', {
+        headers: { 'User-Agent': 'MSH-API/2.0', 'Cache-Control': 'no-cache' },
+        cf: { cacheTtl: 0, cacheEverything: false },
+      });
+      if (twseDate.ok) {
+        const tdata = await twseDate.json() as { date?: string };
+        if (tdata.date && /^\d{8}$/.test(tdata.date)) tradeDate = tdata.date;
+      }
+    } catch (_) {}
 
     // Try TPEX first — it often has CDate in each row: "2026/06/15"
     try {
