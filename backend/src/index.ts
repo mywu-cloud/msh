@@ -80,7 +80,7 @@ async function fetchTpexPrices(codes?: string[]): Promise<Map<string, PriceInfo>
             cf: { cacheTtl: 60, cacheEverything: true },
           });
           if (!res.ok) return;
-          const data = await res.json() as { chart?: { result?: Array<{ meta?: { regularMarketPrice?: number; regularMarketChange?: number; regularMarketChangePercent?: number } }> } };
+          const data = await res.json() as { chart?: { result?: Array<{ meta?: { regularMarketPrice?: number; regularMarketChange?: number; regularMarketChangePercent?: number; previousClose?: number; chartPreviousClose?: number } }> } };
           const meta = data.chart?.result?.[0]?.meta;
           if (!meta) return;
           const close = meta.regularMarketPrice || 0;
