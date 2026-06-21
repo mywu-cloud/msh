@@ -74,7 +74,7 @@ async function fetchTpexPrices(codes?: string[]): Promise<Map<string, PriceInfo>
       const batch = codes.slice(i, i + PARALLEL);
       const promises = batch.map(async (code) => {
         try {
-          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}.TWO?interval=1d&range=1d`;
+          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}.TWO?interval=1d&range=5d`;
           const res = await fetch(url, {
             headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MSH-API/2.0)' },
             cf: { cacheTtl: 60, cacheEverything: true },
@@ -84,8 +84,11 @@ async function fetchTpexPrices(codes?: string[]): Promise<Map<string, PriceInfo>
           const meta = data.chart?.result?.[0]?.meta;
           if (!meta) return;
           const close = meta.regularMarketPrice || 0;
-          const change = Math.round((meta.regularMarketChange || 0) * 100) / 100;
-          const change_pct = Math.round((meta.regularMarketChangePercent || 0) * 100) / 100;
+          const prevClose = meta.previousClose || meta.chartPreviousClose || 0;
+          const rawChange = prevClose > 0 ? (close - prevClose) : (meta.regularMarketChange || 0);
+          const change = Math.round(rawChange * 100) / 100;
+          const rawPct = prevClose > 0 ? (rawChange / prevClose * 100) : (meta.regularMarketChangePercent || 0);
+          const change_pct = Math.round(rawPct * 100) / 100;
           if (close > 0) result.set(code, { close, change, change_pct });
         } catch (_e) { /* skip failed code */ }
       });
@@ -844,7 +847,7 @@ async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; m
         if (Array.isArray(tpexData) && tpexData.length > 0) {
           const cdateRaw = tpexData[0].CDate || '';
           // CDate format: "2026/06/15" → "20260615"
-          const d = cdateRaw.replace(/D/g, '');
+          const d = cdateRaw.replace(/\//g, '');
           if (/^\d{8}$/.test(d) && d <= todayTW) {
             tradeDate = d;
             console.log('Got trade date from TPEX CDate:', tradeDate);
@@ -863,7 +866,7 @@ async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; m
         if (miRes.ok) {
           const miData = await miRes.json() as Array<{ Date?: string }>;
           if (Array.isArray(miData) && miData.length > 0 && miData[0].Date) {
-            const d = String(miData[0].Date).replace(/D/g, '');
+            const d = String(miData[0].Date).replace(/\//g, '');
             if (/^\d{8}$/.test(d) && d <= todayTW) {
               tradeDate = d;
               console.log('Got trade date from MI_INDEX:', tradeDate);
@@ -918,7 +921,7 @@ async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; m
     // todayTW is computed in Step 1; if actual trade date differs, delete wrong entries
     if (todayTW !== tradeDate) {
       try {
-        await env.DB.prepare('DELETE FROM stock_prices WHERE trade_date = ?').bind(todayTW).run();
+        await env.DB.prepare('DELETE FROM stock_prices WHERE trade_date != ?').bind(tradeDate).run();
         console.log('Deleted stale entries for calendar date ' + todayTW);
       } catch (e) { console.warn('Cleanup stale dates failed:', e); }
     }
