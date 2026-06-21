@@ -88,14 +88,14 @@ function ChangeCell({ value }: { value: number | null | undefined }) {
 }
 
 function PriceCell({ price }: { price?: PriceInfo | null }) {
-  if (!price || !price.close) return <><td className="text-center px-2 py-2 text-xs text-slate-600 min-w-[90px]">—</td><td className="text-center px-2 py-2 text-xs text-slate-600 min-w-[64px]">—</td><td className="text-center px-2 py-2 text-xs text-slate-600 min-w-[72px]">—</td></>
+  if (!price || !price.close) return <><td className="text-center px-2 py-2 text-xs text-slate-600 min-w-[90px]">—</td><td className="text-center px-2 py-2 text-xs text-slate-600 min-w-[64px]">—</td><td className="text-center px-2 py-2 text-xs text-slate-600 min-w-[84px]">—</td></>
   const isPos = price.change > 0
   const isNeg = price.change < 0
   const cls = isPos ? 'text-red-600' : isNeg ? 'text-green-600' : 'text-slate-700'
   return <>
-    <td className={`text-center px-2 py-2 text-xs font-medium min-w-[64px] ${cls}`}>{price.close.toFixed(2)}</td>
-    <td className={`text-center px-2 py-2 text-xs font-medium min-w-[90px] ${cls}`}>{isPos ? '+' : ''}{price.change.toFixed(2)}</td>
-    <td className={`text-center px-2 py-2 text-xs font-medium min-w-[72px] ${cls}`}>{isPos ? '+' : ''}{price.change_pct.toFixed(2)}%</td>
+    <td className={`text-center px-2 py-2 text-xs font-medium min-w-[90px] ${cls}`}>{price.close.toFixed(2)}</td>
+    <td className={`text-center px-2 py-2 text-xs font-medium min-w-[64px] ${cls}`}>{isPos ? '+' : ''}{price.change.toFixed(2)}</td>
+    <td className={`text-center px-2 py-2 text-xs font-medium min-w-[84px] ${cls}`}>{isPos ? '+' : ''}{price.change_pct.toFixed(2)}%</td>
   </>
 }
 
@@ -161,7 +161,7 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
             {hasPrice && <>
               <th className={thClass('price_close') + ' min-w-[90px]'} onClick={() => onSort('price_close')}>{priceDate ? priceDate + ' 收盤' : '收盤'}<SortIcon col="price_close" sortKey={sortKey} sortDir={sortDir} /></th>
               <th className={thClass('price_change') + ' min-w-[64px]'} onClick={() => onSort('price_change')}>漲跌<SortIcon col="price_change" sortKey={sortKey} sortDir={sortDir} /></th>
-              <th className={thClass('price_change_pct') + ' min-w-[72px]'} onClick={() => onSort('price_change_pct')}>漲跌幅<SortIcon col="price_change_pct" sortKey={sortKey} sortDir={sortDir} /></th>
+              <th className={thClass('price_change_pct') + ' min-w-[84px]'} onClick={() => onSort('price_change_pct')}>漲跌幅<SortIcon col="price_change_pct" sortKey={sortKey} sortDir={sortDir} /></th>
             </>}
           </tr>
         </thead>
