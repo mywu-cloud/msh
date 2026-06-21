@@ -57,7 +57,7 @@ export default function HomePage() {
         <SearchBar value={searchQuery} onChange={setSearchQuery} placeholder="搜尋股票代號或名稱..." />
       </div>
 
-      <div className="card p-0 overflow-hidden">
+      <div className="card p-0">
         <div className="flex border-b border-surface-border">
           {TABS.map(tab => (
             <button
