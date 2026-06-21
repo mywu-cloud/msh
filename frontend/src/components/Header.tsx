@@ -45,7 +45,7 @@ export function Header() {
         <div className="flex items-center justify-between h-16">
           <Link href="/" className="flex items-center gap-2 font-bold text-primary-600">
             <Database className="w-5 h-5" />
-            <span>MSH 股權分析</span>
+            <span>MSH 股權分析 神秘金字塔</span>
           </Link>
           <div className="flex items-center gap-4">
             {dataDate && (
