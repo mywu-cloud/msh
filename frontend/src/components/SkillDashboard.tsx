@@ -134,7 +134,7 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm" style={{tableLayout:'auto'}}>
+      <table className="text-sm" style={{minWidth:'1100px', tableLayout:'auto'}}>
         <thead>
           <tr className="bg-slate-50 border-b border-slate-200">
             <th className="text-left px-3 py-2 text-slate-700 font-medium w-8 cursor-pointer hover:text-primary-600 select-none" onClick={() => onSort('rank')}>
@@ -288,7 +288,7 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
   if (sortedRows.length === 0) return <div className="p-8 text-center text-slate-600"><p>找不到符合條件的股票</p></div>
 
   return (
-    <div className="overflow-hidden">
+    <div className="overflow-x-auto" style={{minWidth:0}}>
       {/* Download toolbar */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50">
         <span className="text-xs text-slate-700">共 {sortedRows.length} 檔</span>
