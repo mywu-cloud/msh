@@ -4,6 +4,7 @@ import useSWR from 'swr'
 import { ArrowLeft, AlertTriangle, TrendingUp, TrendingDown, Users, BarChart2, DollarSign, Building2, Activity } from 'lucide-react'
 import Link from 'next/link'
 import { HolderHeatmap } from '@/components/HolderHeatmap'
+import { TechnicalCharts } from '@/components/TechnicalCharts'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.tw-mywu.workers.dev'
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -252,6 +253,7 @@ export function StockDetailClient({ code }: StockDetailClientProps) {
                   </div>
                 </div>
               </div>
+              <TechnicalCharts series={technical.series} />
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
