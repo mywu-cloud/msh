@@ -63,13 +63,20 @@ function groupHolders(brackets: BracketRow[], category: HolderCategory): number 
 
 // The "17" bracket row from the source data IS the 合計 (total) row, so use it
 // directly instead of summing all brackets (which would double-count holders).
-function totalHolders(brackets: BracketRow[]): number {
+// Some historical weeks only have partial bracket data (backend still backfilling),
+// leaving this row's holders at 0. Treat that as "no data" (null) rather than a real
+// 0 so charts show a gap instead of forcing the Y-axis back down to 0.
+function totalHolders(brackets: BracketRow[]): number | null {
   const totalRow = brackets.find(b => Number(b.bracket) === 17)
-  return totalRow ? (totalRow.holders || 0) : 0
+  return totalRow && totalRow.holders > 0 ? totalRow.holders : null
 }
 
 // Zoom a Y-axis into the actual data range instead of forcing it to start at 0,
 // so week-over-week fluctuations are clearly visible instead of looking flat.
+function round2(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
 function computeZoomDomain(values: number[], paddingRatio = 0.2, minFloor = 0): [number, number] {
   const finite = values.filter(v => Number.isFinite(v))
   if (finite.length === 0) return [0, 1]
@@ -77,10 +84,10 @@ function computeZoomDomain(values: number[], paddingRatio = 0.2, minFloor = 0): 
   const max = Math.max(...finite)
   if (min === max) {
     const pad = Math.max(Math.abs(min) * 0.1, 1)
-    return [Math.max(minFloor, min - pad), max + pad]
+    return [round2(Math.max(minFloor, min - pad)), round2(max + pad)]
   }
   const pad = (max - min) * paddingRatio
-  return [Math.max(minFloor, min - pad), max + pad]
+  return [round2(Math.max(minFloor, min - pad)), round2(max + pad)]
 }
 
 export function HolderHeatmap({ data, stockCode, stockName }: Props) {
@@ -114,7 +121,7 @@ export function HolderHeatmap({ data, stockCode, stockName }: Props) {
     }))
 
   const bigRatioDomain = computeZoomDomain(chartData.map(d => d.大股東), 0.25, 0)
-  const holderCountDomain = computeZoomDomain(totalHoldersData.map(d => d.總股東人數).filter(v => v > 0), 0.15, 0)
+  const holderCountDomain = computeZoomDomain(totalHoldersData.map(d => d.總股東人數).filter((v): v is number => v !== null && v > 0), 0.15, 0)
 
   return (
     <div className="space-y-6">
