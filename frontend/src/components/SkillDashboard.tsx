@@ -175,7 +175,7 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
                 <td className="px-3 py-2 whitespace-nowrap">
                   <Link href={`/stock/${row.stock_code}`} className="flex items-center gap-2 group">
                     <div>
-                      <span className="font-mono font-semibold text-primary-600">{row.stock_code}</span>
+                      <span className="font-semibold text-primary-600">{row.stock_code}</span>
                       {row.stock_name && <span className="ml-1.5 text-slate-800 text-xs">{row.stock_name}</span>}
                     </div>
                   </Link>
