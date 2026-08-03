@@ -88,14 +88,14 @@ function ChangeCell({ value }: { value: number | null | undefined }) {
 }
 
 function PriceCell({ price }: { price?: PriceInfo | null }) {
-  if (!price || !price.close) return <><td className="text-center px-2 py-2 text-xs text-slate-600 whitespace-nowrap" style={{minWidth:'100px'}}>—</td><td className="text-center px-2 py-2 text-xs text-slate-600 whitespace-nowrap" style={{minWidth:'80px'}}>—</td><td className="text-center px-2 py-2 text-xs text-slate-600 whitespace-nowrap" style={{minWidth:'100px'}}>—</td></>
+  if (!price || !price.close) return <><td className="text-center px-2 py-2 text-xs text-slate-600 whitespace-nowrap" style={{minWidth:'100px'}}>—</td><td className="text-center px-2 py-2 text-xs text-slate-600 whitespace-nowrap sticky right-[100px] bg-white z-10" style={{minWidth:'80px'}}>—</td><td className="text-center px-2 py-2 text-xs text-slate-600 whitespace-nowrap sticky right-0 bg-white z-10 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.15)]" style={{minWidth:'100px'}}>—</td></>
   const isPos = price.change > 0
   const isNeg = price.change < 0
   const cls = isPos ? 'text-red-600' : isNeg ? 'text-green-600' : 'text-slate-700'
   return <>
     <td className={`text-center px-2 py-2 text-xs font-medium whitespace-nowrap ${cls}`} style={{minWidth:'100px'}}>{price.close.toFixed(2)}</td>
-    <td className={`text-center px-2 py-2 text-xs font-medium whitespace-nowrap ${cls}`} style={{minWidth:'80px'}}>{isPos ? '+' : ''}{price.change.toFixed(2)}</td>
-    <td className={`text-center px-2 py-2 text-xs font-medium whitespace-nowrap ${cls}`} style={{minWidth:'100px'}}>{isPos ? '+' : ''}{price.change_pct.toFixed(2)}%</td>
+    <td className={`text-center px-2 py-2 text-xs font-medium whitespace-nowrap ${cls} sticky right-[100px] bg-white z-10`} style={{minWidth:'80px'}}>{isPos ? '+' : ''}{price.change.toFixed(2)}</td>
+    <td className={`text-center px-2 py-2 text-xs font-medium whitespace-nowrap ${cls} sticky right-0 bg-white z-10 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.15)]`} style={{minWidth:'100px'}}>{isPos ? '+' : ''}{price.change_pct.toFixed(2)}%</td>
   </>
 }
 
@@ -160,8 +160,8 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
             </th>
             {hasPrice && <>
               <th className={thClass('price_close') + ' min-w-[100px]'} onClick={() => onSort('price_close')}>{priceDate ? priceDate + ' 收盤' : '收盤'}<SortIcon col="price_close" sortKey={sortKey} sortDir={sortDir} /></th>
-              <th className={thClass('price_change') + ' min-w-[80px]'} onClick={() => onSort('price_change')}>漲跌<SortIcon col="price_change" sortKey={sortKey} sortDir={sortDir} /></th>
-              <th className={thClass('price_change_pct')} style={{minWidth:'100px'}} onClick={() => onSort('price_change_pct')}>漲跌幅<SortIcon col="price_change_pct" sortKey={sortKey} sortDir={sortDir} /></th>
+              <th className={thClass('price_change') + ' min-w-[80px] sticky right-[100px] bg-slate-50 z-10'} onClick={() => onSort('price_change')}>漲跌<SortIcon col="price_change" sortKey={sortKey} sortDir={sortDir} /></th>
+              <th className={thClass('price_change_pct') + ' sticky right-0 bg-slate-50 z-10 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.15)]'} style={{minWidth:'100px'}} onClick={() => onSort('price_change_pct')}>漲跌幅<SortIcon col="price_change_pct" sortKey={sortKey} sortDir={sortDir} /></th>
             </>}
           </tr>
         </thead>
