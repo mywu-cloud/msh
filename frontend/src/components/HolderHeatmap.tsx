@@ -122,6 +122,15 @@ export function HolderHeatmap({ data, stockCode, stockName }: Props) {
 
   const bigRatioDomain = computeZoomDomain(chartData.map(d => d.大股東), 0.25, 0)
   const holderCountDomain = computeZoomDomain(totalHoldersData.map(d => d.總股東人數).filter((v): v is number => v !== null && v > 0), 0.15, 0)
+  // The composition chart is a 100%-stacked area (大股東+中股東+小股東 sum to the
+  // reported total each week). Some historical weeks only have partial data, so
+  // the stacked total can sit well below 100%, making week-over-week changes in
+  // the upper bands hard to see against a full 0-100% axis. Zoom the bottom of
+  // the axis into the actual data range (capped at 100% on top, since the stack
+  // never exceeds that) so proportional changes are clearer.
+  const stackedTotals = chartData.map(d => d.大股東 + d.中股東 + d.小股東)
+  const [stackedRatioMin, stackedRatioMaxRaw] = computeZoomDomain(stackedTotals, 0.2, 0)
+  const stackedRatioDomain: [number, number] = [stackedRatioMin, Math.min(100, stackedRatioMaxRaw)]
 
   return (
     <div className="space-y-6">
@@ -131,7 +140,7 @@ export function HolderHeatmap({ data, stockCode, stockName }: Props) {
           <AreaChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} unit="%" />
+            <YAxis tick={{ fontSize: 11 }} unit="%" domain={stackedRatioDomain} allowDecimals={true} allowDataOverflow={true} />
             <Tooltip formatter={(v: number) => v.toFixed(2) + '%'} />
             <Legend />
             <Area type="monotone" dataKey="大股東" stackId="1" stroke="#ef4444" fill="#fecaca" />
