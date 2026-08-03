@@ -88,7 +88,10 @@ function ChangeCell({ value }: { value: number | null | undefined }) {
 }
 
 function PriceCell({ price }: { price?: PriceInfo | null }) {
-  if (!price || !price.close) return <><td className="text-center px-2 py-2 text-xs text-slate-600 whitespace-nowrap" style={{minWidth:'100px'}}>—</td><td className="text-center px-2 py-2 text-xs text-slate-600 whitespace-nowrap" style={{minWidth:'76px'}}>—</td><td className="text-center px-2 py-2 text-xs text-slate-600 whitespace-nowrap" style={{minWidth:'88px'}}>—</td></>
+  if (!price || !price.close) {
+    const notice = "近期無成交價，可能是減資換股、暫停交易或資料來源限制所致，實際狀況請以公開資訊觀測站公告為準"
+    return <><td className="text-center px-2 py-2 text-xs text-slate-600 whitespace-nowrap" style={{minWidth:'100px'}}><span title={notice} className="cursor-help border-b border-dotted border-slate-400">— <span className="text-amber-500">⚠</span></span></td><td className="text-center px-2 py-2 text-xs text-slate-600 whitespace-nowrap" style={{minWidth:'76px'}}>—</td><td className="text-center px-2 py-2 text-xs text-slate-600 whitespace-nowrap" style={{minWidth:'88px'}}>—</td></>
+  }
   const isPos = price.change > 0
   const isNeg = price.change < 0
   const cls = isPos ? 'text-red-600' : isNeg ? 'text-green-600' : 'text-slate-700'
