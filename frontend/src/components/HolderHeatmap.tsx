@@ -140,7 +140,7 @@ export function HolderHeatmap({ data, stockCode, stockName }: Props) {
           <AreaChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} unit="%" domain={stackedRatioDomain} allowDecimals={true} />
+            <YAxis tick={{ fontSize: 11 }} unit="%" domain={stackedRatioDomain} allowDecimals={true} allowDataOverflow={true} />
             <Tooltip formatter={(v: number) => v.toFixed(2) + '%'} />
             <Legend />
             <Area type="monotone" dataKey="大股東" stackId="1" stroke="#ef4444" fill="#fecaca" />
