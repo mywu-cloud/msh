@@ -226,7 +226,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
                   <td className="px-3 py-2 text-slate-400 text-xs">{idx + 1}</td>
                   <td className="px-3 py-2">
                     <Link href={`/stock/${row.stock_code}`} className="group">
-                      <span className="font-mono font-semibold text-slate-800 group-hover:text-primary-600">{row.stock_code}</span>
+                      <span className="font-semibold text-slate-800 group-hover:text-primary-600">{row.stock_code}</span>
                       {row.stock_name && <span className="ml-1.5 text-slate-500 text-xs">{row.stock_name}</span>}
                     </Link>
                   </td>
@@ -377,7 +377,7 @@ function HeatmapPanel({ market }: { market: Market }) {
             <tr key={row.stock_code} className="border-t border-slate-100">
               <td className="px-2 py-1 sticky left-0 bg-white">
                 <Link href={`/stock/${row.stock_code}`} className="hover:text-primary-600">
-                  <span className="font-mono font-semibold">{row.stock_code}</span>
+                  <span className="font-semibold">{row.stock_code}</span>
                   {row.stock_name && <span className="ml-1 text-slate-400">{row.stock_name}</span>}
                 </Link>
               </td>
@@ -419,7 +419,7 @@ function DivergencePanel({ market }: { market: Market }) {
             {strongBuy.map(row => {
               const recent3 = weekDates.slice(-3).map(d => row.week_changes[d] ?? 0)
               return <Link key={row.stock_code} href={`/stock/${row.stock_code}`} className="flex items-center gap-3 px-2 py-2.5 hover:bg-slate-50 group">
-                <div className="flex-1"><span className="font-mono font-semibold text-slate-800 group-hover:text-primary-600">{row.stock_code}</span>{row.stock_name && <span className="ml-1.5 text-xs text-slate-500">{row.stock_name}</span>}{row.industry && <span className="ml-1.5 text-xs text-slate-400">{row.industry}</span>}</div>
+                <div className="flex-1"><span className="font-semibold text-slate-800 group-hover:text-primary-600">{row.stock_code}</span>{row.stock_name && <span className="ml-1.5 text-xs text-slate-500">{row.stock_name}</span>}{row.industry && <span className="ml-1.5 text-xs text-slate-400">{row.industry}</span>}</div>
                 <div className="flex items-center gap-1.5 text-xs">
                   {recent3.map((v, i) => <span key={i} className={clsx('px-1.5 py-0.5 rounded font-medium', v > 0 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600')}>{v > 0 ? '+' : ''}{v.toFixed(2)}</span>)}
                   <span className="ml-1 font-bold text-red-700">累計+{row.total_change.toFixed(2)}</span>
@@ -436,7 +436,7 @@ function DivergencePanel({ market }: { market: Market }) {
           <div className="divide-y divide-slate-100">
             {strongSell.map(row => (
               <Link key={row.stock_code} href={`/stock/${row.stock_code}`} className="flex items-center gap-3 px-2 py-2.5 hover:bg-slate-50 group">
-                <div className="flex-1"><span className="font-mono font-semibold text-slate-800 group-hover:text-primary-600">{row.stock_code}</span>{row.stock_name && <span className="ml-1.5 text-xs text-slate-500">{row.stock_name}</span>}{row.industry && <span className="ml-1.5 text-xs text-slate-400">{row.industry}</span>}</div>
+                <div className="flex-1"><span className="font-semibold text-slate-800 group-hover:text-primary-600">{row.stock_code}</span>{row.stock_name && <span className="ml-1.5 text-xs text-slate-500">{row.stock_name}</span>}{row.industry && <span className="ml-1.5 text-xs text-slate-400">{row.industry}</span>}</div>
                 <span className="text-sm font-bold text-green-700">{row.latest_change.toFixed(2)}%</span>
                 <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500" />
               </Link>
@@ -516,7 +516,7 @@ function HistoryPanel() {
                     <td className="px-3 py-2 text-slate-400">{idx + 1}</td>
                     <td className="px-3 py-2">
                       <Link href={`/stock/${row.stock_code}`} className="hover:text-primary-600">
-                        <span className="font-mono font-semibold text-slate-800">{row.stock_code}</span>
+                        <span className="font-semibold text-slate-800">{row.stock_code}</span>
                         {row.stock_name && <span className="ml-1.5 text-slate-500">{row.stock_name}</span>}
                       </Link>
                     </td>

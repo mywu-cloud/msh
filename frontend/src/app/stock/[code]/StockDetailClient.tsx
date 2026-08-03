@@ -144,7 +144,7 @@ export function StockDetailClient({ code }: StockDetailClientProps) {
         <div className="flex-1">
           <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-2xl font-bold text-slate-800">
-              <span className="font-mono">{dist.stock_code}</span>
+              <span>{dist.stock_code}</span>
               {stockName && <span className="ml-2 text-lg font-normal text-slate-600">{stockName}</span>}
             </h1>
             {summary?.industry && (
