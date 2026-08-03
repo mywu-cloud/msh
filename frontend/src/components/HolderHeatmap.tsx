@@ -31,20 +31,41 @@ interface Props {
   stockName?: string
 }
 
-const BIG_LABELS = ['400,001以上', '200,001-400,000', '100,001-200,000', '50,001-100,000']
-const MID_LABELS = ['40,001-50,000', '30,001-40,000', '20,001-30,000', '10,001-20,000']
-const SMALL_LABELS = ['5,001-10,000', '1,000-5,000', '1-999']
+// Bracket codes returned by the backend are numeric strings ("1" ~ "17"), where
+// 17 is the 合計 (total) row and must be excluded from any per-category sum.
+// Classification follows the same convention already used by the backend's
+// big-holder-ratio ranking query (bracket >= 10 AND bracket != 17 = 大股東):
+//   1-3   = 小股東 (持股 <=10,000 股)
+//   4-9   = 中股東 (持股 10,001-100,000 股)
+//   10-16 = 大股東 (持股 100,001 股以上)
+type HolderCategory = 'big' | 'mid' | 'small'
 
-function groupRatio(brackets: BracketRow[], labels: string[]): number {
+function bracketCategory(bracket: string): HolderCategory | null {
+  const n = Number(bracket)
+  if (!Number.isFinite(n) || n === 17) return null
+  if (n >= 10) return 'big'
+  if (n >= 4) return 'mid'
+  if (n >= 1) return 'small'
+  return null
+}
+
+function groupRatio(brackets: BracketRow[], category: HolderCategory): number {
   return brackets
-    .filter(b => labels.some(l => b.bracket.includes(l.split('-')[0]) || b.bracket === l))
+    .filter(b => bracketCategory(b.bracket) === category)
     .reduce((sum, b) => sum + (b.ratio || 0), 0)
 }
 
-function groupHolders(brackets: BracketRow[], labels: string[]): number {
+function groupHolders(brackets: BracketRow[], category: HolderCategory): number {
   return brackets
-    .filter(b => labels.some(l => b.bracket.includes(l.split('-')[0]) || b.bracket === l))
+    .filter(b => bracketCategory(b.bracket) === category)
     .reduce((sum, b) => sum + (b.holders || 0), 0)
+}
+
+// The "17" bracket row from the source data IS the 合計 (total) row, so use it
+// directly instead of summing all brackets (which would double-count holders).
+function totalHolders(brackets: BracketRow[]): number {
+  const totalRow = brackets.find(b => Number(b.bracket) === 17)
+  return totalRow ? (totalRow.holders || 0) : 0
 }
 
 // Zoom a Y-axis into the actual data range instead of forcing it to start at 0,
@@ -76,20 +97,20 @@ export function HolderHeatmap({ data, stockCode, stockName }: Props) {
     .map(week => ({
       date: week.date.slice(5),
       fullDate: week.date,
-      大股東: parseFloat(groupRatio(week.brackets, BIG_LABELS).toFixed(2)),
-      中股東: parseFloat(groupRatio(week.brackets, MID_LABELS).toFixed(2)),
-      小股東: parseFloat(groupRatio(week.brackets, SMALL_LABELS).toFixed(2)),
-      總股東人數: week.brackets.reduce((s, b) => s + (b.holders || 0), 0),
+      大股東: parseFloat(groupRatio(week.brackets, 'big').toFixed(2)),
+      中股東: parseFloat(groupRatio(week.brackets, 'mid').toFixed(2)),
+      小股東: parseFloat(groupRatio(week.brackets, 'small').toFixed(2)),
+      總股東人數: totalHolders(week.brackets),
     }))
 
   const totalHoldersData = [...data]
     .sort((a, b) => a.date.localeCompare(b.date))
     .map(week => ({
       date: week.date.slice(5),
-      大股東人數: groupHolders(week.brackets, BIG_LABELS),
-      中股東人數: groupHolders(week.brackets, MID_LABELS),
-      小股東人數: groupHolders(week.brackets, SMALL_LABELS),
-      總股東人數: week.brackets.reduce((s, b) => s + (b.holders || 0), 0),
+      大股東人數: groupHolders(week.brackets, 'big'),
+      中股東人數: groupHolders(week.brackets, 'mid'),
+      小股東人數: groupHolders(week.brackets, 'small'),
+      總股東人數: totalHolders(week.brackets),
     }))
 
   const bigRatioDomain = computeZoomDomain(chartData.map(d => d.大股東), 0.25, 0)
