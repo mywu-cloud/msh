@@ -99,6 +99,87 @@ async function fetchTpexPrices(codes?: string[]): Promise<Map<string, PriceInfo>
   }
   return result;
 }
+// ─── FinMind Technical Indicators (Daily Volume / KD / MACD) ───────────────
+// Docs: https://finmindtrade.com/analysis/#/data/api  (dataset=TaiwanStockPrice)
+
+interface KlineRow { date: string; open: number; high: number; low: number; close: number; volume: number }
+
+const FINMIND_API = "https://api.finmindtrade.com/api/v4/data";
+
+async function fetchFinMindKline(code: string, token: string, startDate: string): Promise<KlineRow[]> {
+  const url = `${FINMIND_API}?dataset=TaiwanStockPrice&data_id=${code}&start_date=${startDate}&token=${encodeURIComponent(token)}`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": "MSH-API/3.0" },
+    cf: { cacheTtl: 0, cacheEverything: false },
+  });
+  if (!res.ok) throw new Error(`FinMind HTTP ${res.status}`);
+  const json = await res.json() as {
+    status?: number; msg?: string;
+    data?: Array<{ date: string; open: number; max: number; min: number; close: number; Trading_Volume: number }>;
+  };
+  if (json.status !== 200 || !Array.isArray(json.data)) throw new Error(`FinMind error: ${json.msg || "unknown"}`);
+  return json.data
+    .map(d => ({ date: d.date.replace(/-/g, ""), open: d.open, high: d.max, low: d.min, close: d.close, volume: d.Trading_Volume }))
+    .filter(d => d.close > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function initKlineDb(env: Env): Promise<void> {
+  try {
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS stock_kline (
+        stock_code TEXT NOT NULL,
+        trade_date TEXT NOT NULL,
+        open REAL, high REAL, low REAL, close REAL, volume INTEGER,
+        updated_at TEXT DEFAULT (datetime('now')),
+        PRIMARY KEY (stock_code, trade_date)
+      )
+    `).run();
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_kline_code_date ON stock_kline(stock_code, trade_date)`).run();
+  } catch (e) {
+    console.error("initKlineDb error:", e);
+  }
+}
+
+// KD (Stochastic Oscillator), classic 9,3,3 with K0=D0=50
+function calcKD(rows: KlineRow[], period = 9): Array<{ k: number; d: number }> {
+  const out: Array<{ k: number; d: number }> = [];
+  let prevK = 50, prevD = 50;
+  for (let i = 0; i < rows.length; i++) {
+    const win = rows.slice(Math.max(0, i - period + 1), i + 1);
+    const highN = Math.max(...win.map(w => w.high));
+    const lowN = Math.min(...win.map(w => w.low));
+    const rsv = highN > lowN ? ((rows[i].close - lowN) / (highN - lowN)) * 100 : 50;
+    const k = (prevK * 2 + rsv) / 3;
+    const d = (prevD * 2 + k) / 3;
+    out.push({ k, d });
+    prevK = k; prevD = d;
+  }
+  return out;
+}
+
+function calcEMA(values: number[], period: number): number[] {
+  const alpha = 2 / (period + 1);
+  const out: number[] = [];
+  let prev = values[0] ?? 0;
+  for (let i = 0; i < values.length; i++) {
+    const v = i === 0 ? values[0] : prev + alpha * (values[i] - prev);
+    out.push(v);
+    prev = v;
+  }
+  return out;
+}
+
+// MACD (12, 26, 9); histogram uses Taiwan convention (DIF-DEA)*2
+function calcMACD(rows: KlineRow[]): Array<{ dif: number; dea: number; hist: number }> {
+  const closes = rows.map(r => r.close);
+  const ema12 = calcEMA(closes, 12);
+  const ema26 = calcEMA(closes, 26);
+  const dif = closes.map((_, i) => ema12[i] - ema26[i]);
+  const dea = calcEMA(dif, 9);
+  return dif.map((v, i) => ({ dif: v, dea: dea[i], hist: (v - dea[i]) * 2 }));
+}
+
 async function initDb(env: Env): Promise<void> {
   try {
     await env.DB.prepare(`
@@ -595,6 +676,89 @@ async function handleStockDetail(request: Request, env: Env, stockCode: string):
   }
 }
 
+// ─── handleTechnical (FinMind: daily volume / KD / MACD) ────────────────────
+async function handleTechnical(request: Request, env: Env, stockCode: string): Promise<Response> {
+  if (!stockCode || !/^[0-9A-Z]{4,8}$/i.test(stockCode)) return errorResponse("Invalid stock code");
+  const code = stockCode.toUpperCase();
+  const cacheKey = `technical:v1:${code}`;
+  const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
+  if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
+
+  if (!env.FINMIND_TOKEN) {
+    return errorResponse("FINMIND_TOKEN not configured on this Worker (set via: wrangler secret put FINMIND_TOKEN)", 501);
+  }
+
+  try {
+    await initKlineDb(env);
+
+    const latestRow = await env.DB.prepare(
+      "SELECT MAX(trade_date) as d FROM stock_kline WHERE stock_code = ?"
+    ).bind(code).first() as { d: string | null } | null;
+    const latestCached = latestRow?.d || "";
+
+    const now = new Date();
+    const twNow = new Date(now.getTime() + 8 * 3600000);
+    const todayTW = twNow.toISOString().slice(0, 10).replace(/-/g, "");
+
+    // Only hit FinMind once per day per stock (free-tier friendly); otherwise serve from D1
+    if (!latestCached || latestCached < todayTW) {
+      let startDate: string;
+      if (latestCached) {
+        const y = latestCached.slice(0, 4), m = latestCached.slice(4, 6), d = latestCached.slice(6, 8);
+        startDate = new Date(new Date(`${y}-${m}-${d}`).getTime() - 5 * 86400000).toISOString().slice(0, 10);
+      } else {
+        // Need ~200 calendar days of history so EMA26/DEA9 have stabilized
+        startDate = new Date(twNow.getTime() - 200 * 86400000).toISOString().slice(0, 10);
+      }
+      try {
+        const klineRows = await fetchFinMindKline(code, env.FINMIND_TOKEN, startDate);
+        if (klineRows.length > 0) {
+          const stmts = klineRows.map(r => env.DB.prepare(
+            "INSERT OR REPLACE INTO stock_kline (stock_code, trade_date, open, high, low, close, volume, updated_at) VALUES (?,?,?,?,?,?,?,datetime('now'))"
+          ).bind(code, r.date, r.open, r.high, r.low, r.close, r.volume));
+          for (let i = 0; i < stmts.length; i += 90) await env.DB.batch(stmts.slice(i, i + 90));
+        }
+      } catch (e) {
+        console.error("FinMind fetch error:", e);
+        // fall through and serve whatever is already cached in D1
+      }
+    }
+
+    const histResult = await env.DB.prepare(
+      "SELECT trade_date as date, open, high, low, close, volume FROM stock_kline WHERE stock_code = ? ORDER BY trade_date ASC"
+    ).bind(code).all();
+    const rows = (histResult.results || []) as unknown as KlineRow[];
+    if (rows.length < 2) return errorResponse("Insufficient K-line data from FinMind (check token / free-tier quota / stock code)", 404);
+
+    const kd = calcKD(rows);
+    const macd = calcMACD(rows);
+    const N = 30; // return recent 30 trading days for charting
+    const start = Math.max(0, rows.length - N);
+    const series = rows.slice(start).map((r, idx) => {
+      const i = start + idx;
+      return {
+        date: r.date,
+        close: r.close,
+        volume: r.volume,
+        k: Math.round(kd[i].k * 100) / 100,
+        d: Math.round(kd[i].d * 100) / 100,
+        dif: Math.round(macd[i].dif * 100) / 100,
+        dea: Math.round(macd[i].dea * 100) / 100,
+        hist: Math.round(macd[i].hist * 100) / 100,
+      };
+    });
+    const latest = series[series.length - 1];
+
+    const responseData = { stock_code: code, source: "finmind", latest, series };
+    const responseText = JSON.stringify(responseData);
+    if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 3600 * 4 });
+    return new Response(responseText, { headers: CORS_HEADERS });
+  } catch (err) {
+    console.error("handleTechnical error:", err);
+    return errorResponse("Technical indicator query failed: " + String(err), 500);
+  }
+}
+
 // ─── handleAllStocks ──────────────────────────────────────────────────────────
 async function handleAllStocks(env: Env): Promise<Response> {
   const cacheKey = 'allstocks:v1';
@@ -1025,6 +1189,8 @@ export default {
     const distMatch = path.match(/^\/api\/distribution\/([A-Z0-9]+)$/i);
   const stockMatch = path.match(/^\/api\/stock\/([A-Z0-9]+)$/i);
   if (stockMatch) return handleStockDetail(request, env, stockMatch[1]);
+    const techMatch = path.match(/^\/api\/technical\/([A-Z0-9]+)$/i);
+    if (techMatch) return handleTechnical(request, env, techMatch[1]);
   if (path === "/api/all-stocks" || path === "/api/all-stocks/") return handleAllStocks(env);
   if (path === "/api/upsert-stock" || path === "/api/upsert-stock/") return handleUpsertStock(request, env);
     if (path === "/api/fix-dates" || path === "/api/fix-dates/") return handleFixDates(request, env);
@@ -1040,6 +1206,7 @@ export default {
           "GET /api/top-changes?type=increase|decrease&market=twse|tpex|etf|all&limit=20",
           "GET /api/search?q=keyword",
           "GET /api/stats",
+          "GET /api/technical/:stockCode (daily volume + KD + MACD, requires FINMIND_TOKEN)",
           "GET /api/industries?market=twse|tpex",
           "POST /api/upload-csv (multipart/form-data: file, date?)",
           "POST /api/screener-snapshot {snapshot_date, market, stocks:[]}",
