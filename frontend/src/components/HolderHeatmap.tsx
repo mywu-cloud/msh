@@ -47,6 +47,21 @@ function groupHolders(brackets: BracketRow[], labels: string[]): number {
     .reduce((sum, b) => sum + (b.holders || 0), 0)
 }
 
+// Zoom a Y-axis into the actual data range instead of forcing it to start at 0,
+// so week-over-week fluctuations are clearly visible instead of looking flat.
+function computeZoomDomain(values: number[], paddingRatio = 0.2, minFloor = 0): [number, number] {
+  const finite = values.filter(v => Number.isFinite(v))
+  if (finite.length === 0) return [0, 1]
+  const min = Math.min(...finite)
+  const max = Math.max(...finite)
+  if (min === max) {
+    const pad = Math.max(Math.abs(min) * 0.1, 1)
+    return [Math.max(minFloor, min - pad), max + pad]
+  }
+  const pad = (max - min) * paddingRatio
+  return [Math.max(minFloor, min - pad), max + pad]
+}
+
 export function HolderHeatmap({ data, stockCode, stockName }: Props) {
   if (!data || data.length === 0) {
     return (
@@ -77,6 +92,9 @@ export function HolderHeatmap({ data, stockCode, stockName }: Props) {
       總股東人數: week.brackets.reduce((s, b) => s + (b.holders || 0), 0),
     }))
 
+  const bigRatioDomain = computeZoomDomain(chartData.map(d => d.大股東), 0.25, 0)
+  const holderCountDomain = computeZoomDomain(totalHoldersData.map(d => d.總股東人數).filter(v => v > 0), 0.15, 0)
+
   return (
     <div className="space-y-6">
       <div>
@@ -95,12 +113,24 @@ export function HolderHeatmap({ data, stockCode, stockName }: Props) {
         </ResponsiveContainer>
       </div>
       <div>
-        <h3 className="text-sm font-medium text-slate-600 mb-2">股東人數趨勢</h3>
+        <h3 className="text-sm font-medium text-slate-600 mb-2">大股東持有比率趨勢（局部放大）</h3>
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} unit="%" domain={bigRatioDomain} allowDecimals={true} />
+            <Tooltip formatter={(v: number) => v.toFixed(2) + '%'} />
+            <Line type="monotone" dataKey="大股東" name="大股東%" stroke="#ef4444" strokeWidth={2} dot={{ r: 3, fill: '#ef4444' }} activeDot={{ r: 5 }} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <div>
+        <h3 className="text-sm font-medium text-slate-600 mb-2">股東人數趨勢（局部放大）</h3>
         <ResponsiveContainer width="100%" height={200}>
           <LineChart data={totalHoldersData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} domain={holderCountDomain} allowDecimals={false} />
             <Tooltip />
             <Line type="monotone" dataKey="總股東人數" stroke="#3b82f6" strokeWidth={2} dot={{ r: 3, fill: '#3b82f6' }} activeDot={{ r: 5 }} />
           </LineChart>
