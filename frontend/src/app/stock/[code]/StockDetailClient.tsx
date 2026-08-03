@@ -1,7 +1,7 @@
 'use client'
 
 import useSWR from 'swr'
-import { ArrowLeft, AlertTriangle, TrendingUp, TrendingDown, Users, BarChart2, DollarSign, Building2 } from 'lucide-react'
+import { ArrowLeft, AlertTriangle, TrendingUp, TrendingDown, Users, BarChart2, DollarSign, Building2, Activity } from 'lucide-react'
 import Link from 'next/link'
 import { HolderHeatmap } from '@/components/HolderHeatmap'
 
@@ -44,6 +44,24 @@ interface StockSummary {
   weekly_ratios: Array<{ date: string; big: number; mid: number; small: number }>
 }
 
+interface TechnicalPoint {
+  date: string
+  close: number
+  volume: number
+  k: number
+  d: number
+  dif: number
+  dea: number
+  hist: number
+}
+
+interface TechnicalResponse {
+  stock_code: string
+  source: string
+  latest: TechnicalPoint
+  series: TechnicalPoint[]
+}
+
 interface StockDetailClientProps {
   code: string
 }
@@ -79,6 +97,11 @@ export function StockDetailClient({ code }: StockDetailClientProps) {
   const { data: summary, isLoading: summaryLoading } = useSWR<StockSummary>(
     `${API_BASE}/api/stock/${code}`,
     fetcher, { revalidateOnFocus: false }
+  )
+
+  const { data: technical, error: technicalError, isLoading: technicalLoading } = useSWR<TechnicalResponse>(
+    `${API_BASE}/api/technical/${code}`,
+    fetcher, { revalidateOnFocus: false, shouldRetryOnError: false }
   )
 
   const isLoading = distLoading || summaryLoading
@@ -200,6 +223,72 @@ export function StockDetailClient({ code }: StockDetailClientProps) {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* Technical Indicators (FinMind: volume / KD / MACD) */}
+      {!technicalLoading && (
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-1.5">
+            <Activity className="w-4 h-4 text-primary-500" />
+            技術指標分析（日成交量 / KD / MACD）
+          </h2>
+          {technical && !(technical as unknown as { error?: string }).error && technical.latest ? (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <div className="text-xs text-slate-500 mb-1">日成交量（股）</div>
+                  <div className="text-base font-bold text-slate-800">{technical.latest.volume.toLocaleString()}</div>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <div className="text-xs text-slate-500 mb-1">K值 / D值</div>
+                  <div className="text-base font-bold text-slate-800">{technical.latest.k.toFixed(1)} / {technical.latest.d.toFixed(1)}</div>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <div className="text-xs text-slate-500 mb-1">MACD（DIF / DEA / 柱狀圖）</div>
+                  <div className="text-base font-bold text-slate-800">
+                    {technical.latest.dif.toFixed(2)} / {technical.latest.dea.toFixed(2)} /{' '}
+                    <span className={technical.latest.hist >= 0 ? 'text-red-600' : 'text-green-600'}>{technical.latest.hist.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      <th className="text-left px-3 py-2 text-slate-600 font-medium">日期</th>
+                      <th className="text-center px-3 py-2 text-slate-600 font-medium">收盤</th>
+                      <th className="text-center px-3 py-2 text-slate-600 font-medium">成交量</th>
+                      <th className="text-center px-3 py-2 text-slate-600 font-medium">K</th>
+                      <th className="text-center px-3 py-2 text-slate-600 font-medium">D</th>
+                      <th className="text-center px-3 py-2 text-slate-600 font-medium">DIF</th>
+                      <th className="text-center px-3 py-2 text-slate-600 font-medium">MACD</th>
+                      <th className="text-center px-3 py-2 text-slate-600 font-medium">柱狀圖</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {[...technical.series].reverse().slice(0, 15).map(p => (
+                      <tr key={p.date} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 text-slate-600 font-medium">{formatDate(p.date)}</td>
+                        <td className="px-3 py-2 text-center text-slate-800">{p.close.toFixed(2)}</td>
+                        <td className="px-3 py-2 text-center text-slate-600">{p.volume.toLocaleString()}</td>
+                        <td className="px-3 py-2 text-center text-slate-600">{p.k.toFixed(1)}</td>
+                        <td className="px-3 py-2 text-center text-slate-600">{p.d.toFixed(1)}</td>
+                        <td className="px-3 py-2 text-center text-slate-600">{p.dif.toFixed(2)}</td>
+                        <td className="px-3 py-2 text-center text-slate-600">{p.dea.toFixed(2)}</td>
+                        <td className={`px-3 py-2 text-center ${p.hist >= 0 ? 'text-red-600' : 'text-green-600'}`}>{p.hist.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-slate-400 mt-2">資料來源：FinMind TaiwanStockPrice</p>
+            </>
+          ) : (
+            <p className="text-xs text-slate-400 py-6 text-center">
+              {(technical as unknown as { error?: string })?.error || '尚無技術指標資料（需於後端設定 FinMind API Token）'}
+            </p>
+          )}
         </div>
       )}
 
