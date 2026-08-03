@@ -184,6 +184,19 @@ export function StockDetailClient({ code }: StockDetailClientProps) {
         </div>
       )}
 
+      {/* Holder Distribution Heatmap */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+        <h2 className="text-sm font-semibold text-slate-700 mb-4 flex items-center gap-1.5">
+          <BarChart2 className="w-4 h-4 text-primary-500" />
+          持股分布趨勢（各級距持股比率）
+        </h2>
+        <HolderHeatmap
+          data={dist.data}
+          stockCode={dist.stock_code}
+          stockName={stockName}
+        />
+      </div>
+
       {/* Big Holder Ratio Trend */}
       {summary && summary.weekly_ratios && summary.weekly_ratios.length > 0 && (
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
@@ -293,19 +306,6 @@ export function StockDetailClient({ code }: StockDetailClientProps) {
           )}
         </div>
       )}
-
-      {/* Holder Distribution Heatmap */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-700 mb-4 flex items-center gap-1.5">
-          <BarChart2 className="w-4 h-4 text-primary-500" />
-          持股分布趨勢（各級距持股比率）
-        </h2>
-        <HolderHeatmap
-          data={dist.data}
-          stockCode={dist.stock_code}
-          stockName={stockName}
-        />
-      </div>
     </div>
   )
 }
