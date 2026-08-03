@@ -99,6 +99,40 @@ async function fetchTpexPrices(codes?: string[]): Promise<Map<string, PriceInfo>
   }
   return result;
 }
+// ─── Official Listed-Securities Master (used to filter out delisted stocks) ─
+// Source: TWSE ISIN lookup (covers both TWSE strMode=2 and TPEx strMode=4).
+// Cached in KV for 24h; fails open (returns empty set) so a fetch failure never
+// wipes out the whole list.
+async function getListedCodesSet(env: Env): Promise<Set<string>> {
+  const cacheKey = "listedcodes:v1";
+  if (env.CACHE) {
+    const cached = await env.CACHE.get(cacheKey);
+    if (cached) {
+      try {
+        return new Set(JSON.parse(cached) as string[]);
+      } catch (_e) { /* fall through and refetch */ }
+    }
+  }
+  const codes = new Set<string>();
+  for (const mode of [2, 4]) {
+    try {
+      const res = await fetch(`https://isin.twse.com.tw/isin/C_public.jsp?strMode=${mode}`);
+      if (!res.ok) continue;
+      const buf = await res.arrayBuffer();
+      const html = new TextDecoder("big5").decode(buf);
+      const re = /<td bgcolor=#(?:FAFAD2|D5FFD5)>(\d{4,6}[A-Za-z]{0,2})\u3000/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(html)) !== null) codes.add(m[1]);
+    } catch (e) {
+      console.error("getListedCodesSet fetch error:", e);
+    }
+  }
+  if (codes.size > 0 && env.CACHE) {
+    await env.CACHE.put(cacheKey, JSON.stringify([...codes]), { expirationTtl: 86400 });
+  }
+  return codes;
+}
+
 // ─── FinMind Technical Indicators (Daily Volume / KD / MACD) ───────────────
 // Docs: https://finmindtrade.com/analysis/#/data/api  (dataset=TaiwanStockPrice)
 
@@ -296,9 +330,12 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
       result.push({ stock_code: stock.stock_code, stock_name: stock.stock_name, market: stock.market, industry: stock.industry, week_changes: weekChanges, total_change: Math.round(totalChange * 100) / 100, latest_change: weekChanges[latestDate] || 0, latest_ratio: stock.ratioByDate[latestDate] || 0, week_dates: weekDates });
     }
 
-    if (sort === "latest_change") result.sort((a, b) => b.latest_change - a.latest_change);
-    else result.sort((a, b) => b.total_change - a.total_change);
-    const topResult = result.slice(0, limit);
+    const listedCodes = await getListedCodesSet(env);
+    const filteredResult = listedCodes.size > 0 ? result.filter(r => listedCodes.has(r.stock_code)) : result;
+
+    if (sort === "latest_change") filteredResult.sort((a, b) => b.latest_change - a.latest_change);
+    else filteredResult.sort((a, b) => b.total_change - a.total_change);
+    const topResult = filteredResult.slice(0, limit);
 
     let priceMap = new Map<string, PriceInfo>();
     if (includePrice) {
