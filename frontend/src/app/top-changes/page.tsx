@@ -1,9 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import Link from 'next/link'
-import { TrendingUp, TrendingDown, AlertTriangle, Target, Flame, Users, ChevronRight, Star, Download, Save, History } from 'lucide-react'
+import { TrendingUp, TrendingDown, AlertTriangle, Target, Flame, Users, ChevronRight, Star, Download, Save, History, Zap } from 'lucide-react'
 import clsx from 'clsx'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msh-api.tw-mywu.workers.dev'
@@ -45,6 +45,39 @@ interface BHResponse {
 }
 
 interface ScoredRow extends BHRow { score: number }
+
+interface TechnicalPoint {
+  date: string
+  close: number
+  volume: number
+  k: number
+  d: number
+  dif: number
+  dea: number
+  hist: number
+}
+
+interface TechnicalResponse {
+  stock_code: string
+  source: string
+  latest: TechnicalPoint
+  series: TechnicalPoint[]
+}
+
+interface TechnicalBonusParams {
+  kThreshold: number
+  volumeMultiplier: number
+}
+
+interface TechnicalBonusResult {
+  bonus: number
+  signals: string[]
+}
+
+interface FinalRow extends ScoredRow {
+  techBonus: number
+  techSignals: string[]
+}
 
 function formatDate(d: string): string {
   if (!d) return ''
@@ -88,6 +121,33 @@ function scoreStock(row: BHRow, weekDates: string[]): number {
   return Math.round(score * 10) / 10
 }
 
+// 技術指標共振加分：KD 黃金交叉（K值低於門檻）、MACD 柱狀圖翻正、成交量較5日均量放大達門檻倍數
+// 三項各 +10 分，最高 +30 分；僅套用於籌碼分數排序後的候選股，抓不到資料則以 0 分計
+function calcTechnicalBonus(series: TechnicalPoint[] | undefined, params: TechnicalBonusParams): TechnicalBonusResult {
+  if (!series || series.length < 7) return { bonus: 0, signals: [] }
+  const last = series[series.length - 1]
+  const prev = series[series.length - 2]
+  const signals: string[] = []
+  let bonus = 0
+  if (prev.k <= prev.d && last.k > last.d && last.k <= params.kThreshold) {
+    bonus += 10
+    signals.push('KD黃金交叉')
+  }
+  if (prev.hist <= 0 && last.hist > 0) {
+    bonus += 10
+    signals.push('MACD翻正')
+  }
+  const last5 = series.slice(-6, -1)
+  if (last5.length === 5) {
+    const avgVol = last5.reduce((s, r) => s + r.volume, 0) / 5
+    if (avgVol > 0 && last.volume / avgVol >= params.volumeMultiplier) {
+      bonus += 10
+      signals.push('量能放大')
+    }
+  }
+  return { bonus, signals }
+}
+
 function getDivergenceAlert(row: BHRow): string | null {
   if (row.latest_change > 1 && row.total_change > 2) return '大股東持續買進'
   if (row.latest_change < -1) return '大股東減持警示'
@@ -98,9 +158,11 @@ function isEtf(code: string): boolean {
   return /^0[0-9]/.test(code)
 }
 
+// 篩選邏輯：排除無產業別、ETF、存託憑證、創新板股票、已下市、特別股。
+// 特別股/權證以證券代碼格式（4位數字+英文字母）判斷，不再依股票名稱結尾字元（如「創」「特」）排除，
+// 避免誤刪名稱恰好帶有這些字、但實際是一般上市/上櫃股的公司。
 function shouldInclude(r: BHRow | StockChange): boolean {
   const code = r.stock_code || ''
-  const name = (r as BHRow).stock_name || (r as StockChange).stock_name || ''
   const industry = (r as BHRow).industry || (r as StockChange).industry || ''
   if (!(industry && industry.trim())) return false
   if (industry === 'ETF') return false
@@ -108,9 +170,23 @@ function shouldInclude(r: BHRow | StockChange): boolean {
   if (industry === '創新板股票' || industry === '創新版') return false
   if (industry === '已下市' || industry === '特別股') return false
   if (/^\d{4}[A-Z]/.test(code)) return false
-  if (name.endsWith('-創') || name.endsWith('-特') || name.endsWith('創')) return false
-  if (/[甲乙丙丁戊己庚辛壬癸][特]$/.test(name)) return false
   return true
+}
+
+// ─── 評分邏輯說明 Panel ───────────────────────────────────────────────────────
+function ScoringExplanation({ useResonance, kThreshold, volumeMultiplier }: { useResonance: boolean; kThreshold: number; volumeMultiplier: number }) {
+  return (
+    <div className="mx-4 mt-3 mb-1 p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-2">
+      <p className="font-semibold text-slate-700">評分邏輯說明</p>
+      <p>基礎籌碼分數：12週大股東持股比累計變動 × 2（最高30分）＋ 連續增持週數 × 5（無上限）＋ 最新一週變動 × 3（僅正值計分，最高20分）＋ 最新持股比 × 0.2（最高15分）。此分數僅反映大股東籌碼集中度變化，不含股價或技術面因素。</p>
+      <p>篩選排除：無產業別、ETF、存託憑證、創新板股票、已下市、特別股（以證券代碼格式判斷，例如4位數字加英文字母）。不再依股票名稱結尾字元（如「創」「特」）排除，避免誤刪名稱恰好帶有這些字、但實際為一般上市/上櫃股的公司。</p>
+      {useResonance ? (
+        <p>技術指標共振加分（僅套用於籌碼分數前60名候選股，目前門檻：K值≤{kThreshold}、當日量能≥5日均量的{volumeMultiplier}倍）：KD黃金交叉且K值處於低檔（≤門檻）+10分；MACD柱狀圖由負轉正 +10分；成交量放大達門檻倍數以上 +10分，三項最高共+30分。若無法取得該股技術資料，此項加分以0分計。</p>
+      ) : (
+        <p>技術指標共振（日成交量 / KD / MACD）目前未啟用，勾選上方「技術指標共振」即可將其疊加到基礎籌碼分數中，門檻可自行調整。</p>
+      )}
+    </div>
+  )
 }
 
 // ─── 起漲標的 + Save + Download 整合組件 ────────────────────────────────────
@@ -131,24 +207,70 @@ function ScreenerWithSave({ market }: { market: Market }) {
 
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [saveMsg, setSaveMsg] = useState('')
+  const [showExplain, setShowExplain] = useState(false)
+  const [useResonance, setUseResonance] = useState(false)
+  const [kThreshold, setKThreshold] = useState(30)
+  const [volumeMultiplier, setVolumeMultiplier] = useState(1.5)
+  const [techMap, setTechMap] = useState<Record<string, TechnicalResponse | null>>({})
+  const [techLoading, setTechLoading] = useState(false)
 
   const rows: BHRow[] = data?.data || []
   const weekDates = data?.meta?.week_dates || (rows[0]?.week_dates || [])
 
-  const scored: ScoredRow[] = rows
+  const baseScored: ScoredRow[] = rows
     .filter(r => shouldInclude(r) && r.total_change > 0 && r.latest_ratio > 10)
     .map(r => ({ ...r, score: scoreStock(r, weekDates) }))
     .sort((a, b) => b.score - a.score)
+
+  const CANDIDATE_POOL_SIZE = 60
+  const candidatePool = baseScored.slice(0, CANDIDATE_POOL_SIZE)
+  const candidateCodes = candidatePool.map(r => r.stock_code).join(',')
+
+  useEffect(() => {
+    if (!useResonance || !candidateCodes) { setTechMap({}); return }
+    let cancelled = false
+    setTechLoading(true)
+    const codes = candidateCodes.split(',')
+    Promise.all(codes.map(async (code) => {
+      try {
+        const res = await fetch(`${API_BASE}/api/technical/${code}`)
+        if (!res.ok) return [code, null] as const
+        const json = await res.json() as TechnicalResponse
+        return [code, json] as const
+      } catch (_e) {
+        return [code, null] as const
+      }
+    })).then(entries => {
+      if (cancelled) return
+      const map: Record<string, TechnicalResponse | null> = {}
+      for (const [code, json] of entries) map[code] = json
+      setTechMap(map)
+      setTechLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [useResonance, candidateCodes])
+
+  const finalRows: FinalRow[] = (useResonance ? candidatePool : baseScored)
+    .map(r => {
+      const tech = techMap[r.stock_code]
+      const { bonus, signals } = useResonance
+        ? calcTechnicalBonus(tech?.series, { kThreshold, volumeMultiplier })
+        : { bonus: 0, signals: [] as string[] }
+      return { ...r, score: Math.round((r.score + bonus) * 10) / 10, techBonus: bonus, techSignals: signals }
+    })
+    .sort((a, b) => b.score - a.score)
     .slice(0, 20)
+
+  const scored: FinalRow[] = finalRows
 
   const handleDownload = () => {
     if (!scored.length) return
     const recentDates = weekDates.slice(-6)
-    const headers = ['排名', '股票代號', '股票名稱', '產業', ...recentDates.map(d => formatDate(d)), '累計增幅', '持有%', '評分', '收盤價', '漲跌%', '信號']
+    const headers = ['排名', '股票代號', '股票名稱', '產業', ...recentDates.map(d => formatDate(d)), '累計增幅', '持有%', '評分', '技術加分', '技術信號', '收盤價', '漲跌%', '信號']
     const csvRows = scored.map((row, idx) => [
       idx + 1, row.stock_code, row.stock_name || '', row.industry || '',
       ...recentDates.map(d => row.week_changes[d] ?? ''),
-      row.total_change, row.latest_ratio, row.score,
+      row.total_change, row.latest_ratio, row.score, row.techBonus, row.techSignals.join('/'),
       (priceMap[row.stock_code] || row.price)?.close ?? '', (priceMap[row.stock_code] || row.price)?.change_pct ?? '',
       getDivergenceAlert(row) || ''
     ])
@@ -188,9 +310,30 @@ function ScreenerWithSave({ market }: { market: Market }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap gap-2">
         <span className="text-xs text-slate-500">Top 20 起漲潛力標的 · {market === 'twse' ? '上市' : market === 'tpex' ? '上櫃' : 'ETF'}</span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className="flex items-center gap-1 text-xs text-slate-500">
+            <input type="checkbox" checked={useResonance} onChange={e => setUseResonance(e.target.checked)} />
+            技術指標共振
+          </label>
+          {useResonance && (
+            <>
+              <label className="flex items-center gap-1 text-xs text-slate-500">
+                K值≤
+                <input type="number" value={kThreshold} onChange={e => setKThreshold(Number(e.target.value) || 0)} className="w-12 border border-slate-200 rounded px-1 py-0.5" />
+              </label>
+              <label className="flex items-center gap-1 text-xs text-slate-500">
+                量能≥
+                <input type="number" step="0.1" value={volumeMultiplier} onChange={e => setVolumeMultiplier(Number(e.target.value) || 0)} className="w-14 border border-slate-200 rounded px-1 py-0.5" />
+                倍
+              </label>
+              {techLoading && <span className="text-xs text-slate-400">技術指標載入中...</span>}
+            </>
+          )}
+          <button onClick={() => setShowExplain(s => !s)} className="flex items-center gap-1 px-2 py-1 text-xs text-slate-500 hover:text-primary-600 hover:bg-white rounded border border-transparent hover:border-slate-200">
+            評分說明
+          </button>
           {saveStatus === 'saved' && <span className="text-xs text-green-600">{saveMsg}</span>}
           {saveStatus === 'error' && <span className="text-xs text-red-500">{saveMsg}</span>}
           <button onClick={handleDownload} className="flex items-center gap-1 px-2 py-1 text-xs text-slate-500 hover:text-primary-600 hover:bg-white rounded border border-transparent hover:border-slate-200">
@@ -201,6 +344,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
           </button>
         </div>
       </div>
+      {showExplain && <ScoringExplanation useResonance={useResonance} kThreshold={kThreshold} volumeMultiplier={volumeMultiplier} />}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -238,13 +382,23 @@ function ScreenerWithSave({ market }: { market: Market }) {
                     <span className={clsx('inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-bold', row.score >= 50 ? 'bg-red-100 text-red-700' : row.score >= 30 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600')}>
                       <Star className="w-3 h-3" />{row.score}
                     </span>
+                    {row.techBonus > 0 && (
+                      <span className="ml-1 inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-600" title={row.techSignals.join('、')}>
+                        <Zap className="w-3 h-3" />+{row.techBonus}
+                      </span>
+                    )}
                   </td>
                   <td className="text-center px-2 py-2 text-xs hidden md:table-cell">{rowPrice?.close ? rowPrice.close.toFixed(2) : '—'}</td>
                   <td className={clsx('text-center px-2 py-2 text-xs hidden md:table-cell', rowPrice && rowPrice.change_pct > 0 ? 'text-red-600' : rowPrice && rowPrice.change_pct < 0 ? 'text-green-600' : 'text-slate-400')}>
                     {rowPrice?.change_pct != null ? (rowPrice.change_pct > 0 ? '+' : '') + rowPrice.change_pct.toFixed(2) + '%' : '—'}
                   </td>
                   <td className="text-center px-2 py-2 text-xs">
-                    {alert ? <span className={clsx('inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium whitespace-nowrap', alert.includes('買進') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600')}>{alert.includes('買進') ? <Flame className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}{alert}</span> : '—'}
+                    <div className="flex flex-col items-center gap-0.5">
+                      {alert ? <span className={clsx('inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium whitespace-nowrap', alert.includes('買進') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600')}>{alert.includes('買進') ? <Flame className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}{alert}</span> : '—'}
+                      {row.techSignals.length > 0 && (
+                        <span className="text-xs text-blue-500 whitespace-nowrap">{row.techSignals.join('/')}</span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               )
