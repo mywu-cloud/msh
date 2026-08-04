@@ -1113,7 +1113,46 @@ async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; m
     const allPrices = new Map<string, PriceInfo>();
     for (const [k, v] of twsePrices) allPrices.set(k, v);
     for (const [k, v] of tpexPrices) allPrices.set(k, v);
-    if (allPrices.size === 0) return { success: false, message: 'No price data fetched (market may be closed)' };
+    
+
+    // ── Step 2b: Freshness guard — detect stale (未更新) source data ──────────
+    // openapi.twse.com.tw's STOCK_DAY_ALL snapshot has no date field of its own,
+    // so if it hasn't refreshed yet it will silently keep serving the previous
+    // trading day's numbers even though tradeDate (derived from TPEX CDate /
+    // MI_INDEX) has already advanced to a new day. Without this guard, stale
+    // prices get saved under the new tradeDate label (e.g. Friday's close saved
+    // as Monday's) — this is what caused 2330 to show a wrong 08/03 收盤 that
+    // was actually 07/31's price.
+    try {
+      const prevRow = await env.DB.prepare(
+        'SELECT trade_date FROM stock_prices WHERE trade_date < ? ORDER BY trade_date DESC LIMIT 1'
+      ).bind(tradeDate).first() as { trade_date: string } | null;
+      if (prevRow?.trade_date && prevRow.trade_date !== tradeDate) {
+        const prevPricesResult = await env.DB.prepare(
+          'SELECT stock_code, close, change FROM stock_prices WHERE trade_date = ?'
+        ).bind(prevRow.trade_date).all();
+        const prevMap = new Map<string, { close: number; change: number }>();
+        for (const row of prevPricesResult.results || []) {
+          const r = row as { stock_code: string; close: number; change: number };
+          prevMap.set(r.stock_code, { close: r.close, change: r.change });
+        }
+        let compared = 0, identical = 0;
+        for (const [code, p] of twsePrices) {
+          const prev = prevMap.get(code);
+          if (!prev) continue;
+          compared++;
+          if (prev.close === p.close && prev.change === p.change) identical++;
+        }
+        // If the vast majority of TWSE stocks are byte-identical to the prior
+        // stored trading day, the upstream source almost certainly hasn't
+        // refreshed yet — refuse to save mislabeled stale data.
+        if (compared >= 50 && identical / compared > 0.9) {
+          console.warn(`Stale source data detected: ${identical}/${compared} TWSE stocks identical to ${prevRow.trade_date}; skipping save for ${tradeDate}`);
+          return { success: false, message: `偵測到來源資料尚未更新（與 ${prevRow.trade_date} 幾乎完全相同），已略過儲存 ${tradeDate} 的股價，避免標記錯誤日期` };
+        }
+      }
+    } catch (e) { console.warn('Freshness guard check failed:', e); }
+if (allPrices.size === 0) return { success: false, message: 'No price data fetched (market may be closed)' };
 
     // ── Step 3: Batch insert into D1 ─────────────────────────────────────────
     const stmts: D1PreparedStatement[] = [];
