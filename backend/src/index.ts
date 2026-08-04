@@ -1,3 +1,4 @@
+
 /**
  * MSH - 股權分散表大股東籌碼分析 API
  * Cloudflare Workers Backend
@@ -1049,7 +1050,8 @@ async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; m
     } catch (_) {}
 
     // Try TPEX first — it often has CDate in each row: "2026/06/15"
-    try {
+    if (!tradeDate) { // only use TPEX if the primary TWSE STOCK_DAY_ALL date wasn't found
+      try {
       const tpexRes = await fetch('https://www.tpex.org.tw/openapi/v1/exchangeReport/DAILY_CLOSE_QUOTES', {
         headers: { 'User-Agent': 'MSH-API/2.0', 'Cache-Control': 'no-cache' },
         cf: { cacheTtl: 0, cacheEverything: false },
@@ -1067,6 +1069,7 @@ async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; m
         }
       }
     } catch (e) { console.warn('TPEX date fetch failed:', e); }
+    }
 
     // Try TWSE MI_INDEX if TPEX failed
     if (!tradeDate) {
