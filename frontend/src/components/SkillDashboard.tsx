@@ -25,6 +25,7 @@ interface BigHolderRow {
   latest_ratio: number
   week_dates: string[]
   is_etf?: boolean
+    capital_reduction_suspected?: boolean
   price?: PriceInfo | null
 }
 
@@ -188,7 +189,7 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
                 <td className={`text-center px-2 py-2 text-xs font-bold ${isTotalPos ? 'text-red-600' : isTotalNeg ? 'text-green-600' : 'text-slate-600'}`}>
                   {row.total_change > 0 ? '+' : ''}{row.total_change.toFixed(2)}
                 </td>
-                <td className="text-center px-2 py-2 text-slate-700 text-xs font-medium">{row.latest_ratio.toFixed(2)}%</td>
+                <td className="text-center px-2 py-2 text-slate-700 text-xs font-medium">{row.latest_ratio.toFixed(2)}%{row.capital_reduction_suspected && <span title="疑似減資或股權結構調整：集保股權分散表最新一週股東總人數異常過低，本欄位數值暫不具參考性" className="ml-1 text-amber-500 cursor-help">※</span>}</td>
                 {hasPrice && <PriceCell price={priceMap[row.stock_code] || row.price} />}
               </tr>
             )
@@ -299,6 +300,11 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
           <Download className="w-3.5 h-3.5" />CSV 下載
         </button>
       </div>
+      {sortedRows.some(r => r.capital_reduction_suspected) && (
+                <div className="px-4 py-1.5 text-xs text-amber-600 bg-amber-50 border-b border-amber-100">
+                            ※ 疑似減資或股權結構調整期間，集保股權分散表股東總人數異常過低，「上週持有%」及相關累計變動數值暫不具參考性，請以公開資訊觀測站公告為準
+                </div>
+              )}</div>
       <StockTable rows={sortedRows} weekDates={weekDates} startIndex={0} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} hasPrice={hasPrice} priceMap={priceMap} priceDate={priceDate} />
     </div>
   )
