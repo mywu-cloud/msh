@@ -19,6 +19,7 @@ interface StockChange {
   latest_week_change: number
   latest_ratio: number
   analysis_date?: string
+    capital_reduction_suspected?: boolean
 }
 
 interface ApiResponse {
@@ -37,6 +38,7 @@ interface BHRow {
   latest_ratio: number
   week_dates: string[]
   price?: { close: number; change: number; change_pct: number } | null
+    capital_reduction_suspected?: boolean
 }
 
 interface BHResponse {
@@ -170,6 +172,7 @@ function shouldInclude(r: BHRow | StockChange): boolean {
   if (industry === '創新板股票' || industry === '創新版') return false
   if (industry === '已下市' || industry === '特別股') return false
   if (/^\d{4}[A-Z]/.test(code)) return false
+    if ((r as BHRow).capital_reduction_suspected || (r as StockChange).capital_reduction_suspected) return false
   return true
 }
 
