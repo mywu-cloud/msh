@@ -67,7 +67,7 @@ function shouldInclude(row: BigHolderRow): boolean {
   const code = row.stock_code || ''
   if (/^\d{4}[A-Z]/.test(code)) return false
   const name = row.stock_name || ''
-    if (name.endsWith('-創') || name.endsWith('-特')) return false
+    if (name.endsWith('-創') || name.endsWith('-KY創') || name.endsWith('-特')) return false
   if (/[甲乙丙丁戊己庚辛壬癸][特]$/.test(name)) return false
   return true
 }

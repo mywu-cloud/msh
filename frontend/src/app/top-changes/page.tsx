@@ -161,16 +161,16 @@ function isEtf(code: string): boolean {
 }
 
 // 篩選邏輯：排除無產業別、ETF、存託憑證、創新板股票、已下市、特別股。
-// 特別股/權證以證券代碼格式（4位數字+英文字母）判斷，不再依股票名稱結尾字元（如「創」「特」）排除，
-// 避免誤刪名稱恰好帶有這些字、但實際是一般上市/上櫃股的公司。
+// 特別股/權證以證券代碼格式（4位數字+英文字母）判斷；創新板股票除產業別欄位外，另以名稱結尾「-創」或「-KY創」輔助判斷，
+// 因部分創新板個股的產業別欄位仍為原產業分類、未標示為「創新板股票」，故需以名稱後綴補強排除；一般股票名稱極少以「-創」或「-KY創」結尾，誤判風險低。
 function shouldInclude(r: BHRow | StockChange): boolean {
-  const code = r.stock_code || ''
+  const code = r.stock_code || ''; const name = r.stock_name || ''
   const industry = (r as BHRow).industry || (r as StockChange).industry || ''
   if (!(industry && industry.trim())) return false
   if (industry === 'ETF') return false
   if (industry === '存託憑證' || industry === '存托憑證') return false
   if (industry === '創新板股票' || industry === '創新版') return false
-  if (industry === '已下市' || industry === '特別股') return false
+  if (industry === '已下市' || industry === '特別股') return false; if (name.endsWith('-創') || name.endsWith('-KY創')) return false
   if (/^\d{4}[A-Z]/.test(code)) return false
     if ((r as BHRow).capital_reduction_suspected || (r as StockChange).capital_reduction_suspected) return false
   return true
@@ -182,7 +182,7 @@ function ScoringExplanation({ useResonance, kThreshold, volumeMultiplier }: { us
     <div className="mx-4 mt-3 mb-1 p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-2">
       <p className="font-semibold text-slate-700">評分邏輯說明</p>
       <p>基礎籌碼分數：12週大股東持股比累計變動 × 2（最高30分）＋ 連續增持週數 × 5（無上限）＋ 最新一週變動 × 3（僅正值計分，最高20分）＋ 最新持股比 × 0.2（最高15分）。此分數僅反映大股東籌碼集中度變化，不含股價或技術面因素。</p>
-      <p>篩選排除：無產業別、ETF、存託憑證、創新板股票、已下市、特別股（以證券代碼格式判斷，例如4位數字加英文字母）。不再依股票名稱結尾字元（如「創」「特」）排除，避免誤刪名稱恰好帶有這些字、但實際為一般上市/上櫃股的公司。</p>
+      <p>篩選排除：無產業別、ETF、存託憑證、創新板股票、已下市、特別股（以證券代碼格式判斷，例如4位數字加英文字母）；創新板股票並以名稱結尾「-創」或「-KY創」輔助排除（因部分創新板個股產業別欄位未標示為「創新板股票」）。</p>
       {useResonance ? (
         <p>技術指標共振加分（僅套用於籌碼分數前60名候選股，目前門檻：K值≤{kThreshold}、當日量能≥5日均量的{volumeMultiplier}倍）：KD黃金交叉且K值處於低檔（≤門檻）+10分；MACD柱狀圖由負轉正 +10分；成交量放大達門檻倍數以上 +10分，三項最高共+30分。若無法取得該股技術資料，此項加分以0分計。</p>
       ) : (
