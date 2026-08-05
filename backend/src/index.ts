@@ -289,7 +289,8 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
 
     const sql = `
       SELECT hd.stock_code, si.stock_name, si.market, si.industry, hd.date,
-        SUM(CASE WHEN CAST(hd.bracket AS INTEGER) >= 10 AND CAST(hd.bracket AS INTEGER) != 17 THEN hd.ratio ELSE 0 END) as big_holder_ratio
+        SUM(CASE WHEN CAST(hd.bracket AS INTEGER) >= 10 AND CAST(hd.bracket AS INTEGER) != 17 THEN hd.ratio ELSE 0 END) as big_holder_ratio,
+            SUM(CASE WHEN CAST(hd.bracket AS INTEGER) = 17 THEN hd.holders ELSE 0 END) as total_holders
       FROM holder_distribution hd
       LEFT JOIN stock_info si ON hd.stock_code = si.stock_code
       WHERE hd.date IN (${datesList})
@@ -301,18 +302,19 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
     const rawResult = await env.DB.prepare(sql).all();
     const rawRows = rawResult.results || [];
 
-    type StockEntry = { stock_code: string; stock_name: string; market: string; industry: string; ratioByDate: Record<string, number> };
+    type StockEntry = { stock_code: string; stock_name: string; market: string; industry: string; ratioByDate: Record<string, number>; holdersByDate: Record<string, number> };
     const stockMap = new Map<string, StockEntry>();
     for (const rawRow of rawRows) {
-      const row = rawRow as { stock_code: string; stock_name: string; market: string; industry: string; date: string; big_holder_ratio: number };
+      const row = rawRow as { stock_code: string; stock_name: string; market: string; industry: string; date: string; big_holder_ratio: number; total_holders: number };
       const code = row.stock_code;
-      if (!stockMap.has(code)) stockMap.set(code, { stock_code: code, stock_name: row.stock_name || "", market: row.market || "", industry: row.industry || "", ratioByDate: {} });
+      if (!stockMap.has(code)) stockMap.set(code, { stock_code: code, stock_name: row.stock_name || "", market: row.market || "", industry: row.industry || "", ratioByDate: {} , holdersByDate: {}});
       const entry = stockMap.get(code) as StockEntry;
       entry.ratioByDate[row.date] = Math.round((row.big_holder_ratio || 0) * 100) / 100;
+      entry.holdersByDate[row.date] = row.total_holders || 0;
     }
 
     const latestDate = weekDates[weekDates.length - 1];
-    const result: Array<{ stock_code: string; stock_name: string; market: string; industry: string; week_changes: Record<string, number | null>; total_change: number; latest_change: number; latest_ratio: number; week_dates: string[] }> = [];
+    const result: Array<{ stock_code: string; stock_name: string; market: string; industry: string; week_changes: Record<string, number | null>; total_change: number; latest_change: number; latest_ratio: number; week_dates: string[]; capital_reduction_suspected: boolean }> = [];
 
     for (const [, stock] of stockMap) {
       if (!stock.ratioByDate[latestDate]) continue;
@@ -328,7 +330,7 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
           totalChange += change;
         } else weekChanges[d] = null;
       }
-      result.push({ stock_code: stock.stock_code, stock_name: stock.stock_name, market: stock.market, industry: stock.industry, week_changes: weekChanges, total_change: Math.round(totalChange * 100) / 100, latest_change: weekChanges[latestDate] || 0, latest_ratio: stock.ratioByDate[latestDate] || 0, week_dates: weekDates });
+      result.push({ stock_code: stock.stock_code, stock_name: stock.stock_name, market: stock.market, industry: stock.industry, week_changes: weekChanges, total_change: Math.round(totalChange * 100) / 100, latest_change: weekChanges[latestDate] || 0, latest_ratio: stock.ratioByDate[latestDate] || 0, week_dates: weekDates, capital_reduction_suspected: ((stock.holdersByDate[latestDate] || 0) > 0 && (stock.holdersByDate[latestDate] || 0) < 100) });
     }
 
     const listedCodes = await getListedCodesSet(env);
@@ -448,21 +450,21 @@ async function handleTopChanges(request: Request, env: Env): Promise<Response> {
     else if (market === "tpex") marketFilter = `AND (si.market = 'tpex' OR (COALESCE(si.market, '') = '' AND CAST(hd.stock_code AS INTEGER) >= 4000))`;
     else if (market === "etf") marketFilter = "AND hd.stock_code LIKE '0%'";
     else marketFilter = "AND hd.stock_code NOT LIKE '0%'";
-    const sql = `SELECT hd.stock_code, si.stock_name, si.market, si.industry, hd.date, SUM(CASE WHEN CAST(hd.bracket AS INTEGER) >= 10 AND CAST(hd.bracket AS INTEGER) != 17 THEN hd.ratio ELSE 0 END) as big_holder_ratio FROM holder_distribution hd LEFT JOIN stock_info si ON hd.stock_code = si.stock_code WHERE hd.date IN ('${latestDate}', '${prevDate}') ${marketFilter} GROUP BY hd.stock_code, hd.date ORDER BY hd.stock_code, hd.date ASC`;
+    const sql = `SELECT hd.stock_code, si.stock_name, si.market, si.industry, hd.date, SUM(CASE WHEN CAST(hd.bracket AS INTEGER) >= 10 AND CAST(hd.bracket AS INTEGER) != 17 THEN hd.ratio ELSE 0 END) as big_holder_ratio , SUM(CASE WHEN CAST(hd.bracket AS INTEGER) = 17 THEN hd.holders ELSE 0 END) as total_holders FROM holder_distribution hd LEFT JOIN stock_info si ON hd.stock_code = si.stock_code WHERE hd.date IN ('${latestDate}', '${prevDate}') ${marketFilter} GROUP BY hd.stock_code, hd.date ORDER BY hd.stock_code, hd.date ASC`;
     const rawResult = await env.DB.prepare(sql).all();
-    const byStock = new Map<string, { info: Record<string, string>; prev: number; curr: number }>();
+    const byStock = new Map<string, { info: Record<string, string>; prev: number; curr: number; latestHolders: number }>();
     for (const r of rawResult.results || []) {
-      const row = r as { stock_code: string; stock_name: string; market: string; industry: string; date: string; big_holder_ratio: number };
-      if (!byStock.has(row.stock_code)) byStock.set(row.stock_code, { info: { stock_name: row.stock_name || "", market: row.market || "", industry: row.industry || "" }, prev: 0, curr: 0 });
+      const row = r as { stock_code: string; stock_name: string; market: string; industry: string; date: string; big_holder_ratio: number; total_holders: number };
+      if (!byStock.has(row.stock_code)) byStock.set(row.stock_code, { info: { stock_name: row.stock_name || "", market: row.market || "", industry: row.industry || "" }, prev: 0, curr: 0, latestHolders: 0 });
       const entry = byStock.get(row.stock_code)!;
       if (row.date === prevDate) entry.prev = row.big_holder_ratio || 0;
-      else if (row.date === latestDate) entry.curr = row.big_holder_ratio || 0;
+      else if (row.date === latestDate) entry.curr = row.big_holder_ratio || 0; entry.latestHolders = row.total_holders || 0;
     }
     const changes = [];
     for (const [code, entry] of byStock) {
       if (entry.curr === 0) continue;
       const change = Math.round((entry.curr - entry.prev) * 100) / 100;
-      changes.push({ stock_code: code, ...entry.info, latest_week_change: change, latest_ratio: entry.curr, analysis_date: latestDate });
+      changes.push({ stock_code: code, ...entry.info, latest_week_change: change, latest_ratio: entry.curr, analysis_date: latestDate , capital_reduction_suspected: (entry.latestHolders > 0 && entry.latestHolders < 100)});
     }
     if (type === "increase") changes.sort((a, b) => b.latest_week_change - a.latest_week_change);
     else changes.sort((a, b) => a.latest_week_change - b.latest_week_change);
@@ -700,6 +702,7 @@ async function handleStockDetail(request: Request, env: Env, stockCode: string):
     const responseData = {
       stock_code: code, stock_name: stockName, market, industry,
       big_holder_trend, mid_holder_trend, small_holder_trend, total_holders,
+          capital_reduction_suspected: (total_holders > 0 && total_holders < 100),
       latest_ratio: latestRow.big_holder_ratio || 0,
       price,
       week_dates: weekDates,
