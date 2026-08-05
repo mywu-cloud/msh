@@ -304,7 +304,7 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
                 <div className="px-4 py-1.5 text-xs text-amber-600 bg-amber-50 border-b border-amber-100">
                             ※ 疑似減資或股權結構調整期間，集保股權分散表股東總人數異常過低，「上週持有%」及相關累計變動數值暫不具參考性，請以公開資訊觀測站公告為準
                 </div>
-              )}</div>
+              )}
       <StockTable rows={sortedRows} weekDates={weekDates} startIndex={0} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} hasPrice={hasPrice} priceMap={priceMap} priceDate={priceDate} />
     </div>
   )
