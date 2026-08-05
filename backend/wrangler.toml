@@ -9,6 +9,11 @@ binding = "DB"
 database_name = "msh-stock-db"
 database_id = "cfa7a620-887c-496b-b61e-410d3f4a33c4"
 
+# Cloudflare KV Namespace binding (cache for slow external lookups)
+[[kv_namespaces]]
+binding = "CACHE"
+id = "a8d8c56bfae84f1eba81658a06803d39"
+
 [vars]
 ENVIRONMENT = "production"
 
