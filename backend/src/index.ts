@@ -251,9 +251,9 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
   const weeks = Math.min(parseInt(url.searchParams.get("weeks") || "6"), 12);
   const includePrice = url.searchParams.get("include_price") === "1";
   const industryFilter = url.searchParams.get("industry") || "";
-  const etfOnly = url.searchParams.get("etf_only") === "1";
+  const etfOnly = url.searchParams.get("etf_only") === "1"; const debug = url.searchParams.get("debug") === "1"; const t0 = Date.now(); const timings: Record<string, number> = {};
 
-  const cacheKey = `bigholderchanges:v3:${market}:${limit}:${sort}:${weeks}:${includePrice ? "p" : "np"}:${industryFilter}:${etfOnly ? "etf" : ""}`;
+  const cacheKey = `bigholderchanges:v3:${market}:${limit}:${sort}:${weeks}:${includePrice ? "p" : "np"}:${industryFilter}:${etfOnly ? "etf" : ""}:${debug ? "dbg" : ""}`;
   const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
   if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
 
@@ -300,7 +300,7 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
     `;
 
     const rawResult = await env.DB.prepare(sql).all();
-    const rawRows = rawResult.results || [];
+    const rawRows = rawResult.results || []; timings.sql = Date.now() - t0;
 
     type StockEntry = { stock_code: string; stock_name: string; market: string; industry: string; ratioByDate: Record<string, number>; holdersByDate: Record<string, number>; sharesByDate: Record<string, number> };
     const stockMap = new Map<string, StockEntry>();
@@ -333,7 +333,7 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
       result.push({ stock_code: stock.stock_code, stock_name: stock.stock_name, market: stock.market, industry: stock.industry, week_changes: weekChanges, total_change: Math.round(totalChange * 100) / 100, latest_change: weekChanges[latestDate] || 0, latest_ratio: stock.ratioByDate[latestDate] || 0, week_dates: weekDates, capital_reduction_suspected: (((stock.holdersByDate[latestDate] || 0) > 0 && (stock.holdersByDate[latestDate] || 0) < 100) || ((stock.sharesByDate[latestDate] || 0) > 0 && (stock.sharesByDate[priorWeekDate] || 0) > 0 && (stock.sharesByDate[latestDate] || 0) < (stock.sharesByDate[priorWeekDate] || 0) * 0.97)) });
     }
 
-    const listedCodes = await getListedCodesSet(env);
+    timings.aggregate = Date.now() - t0; const listedCodes = await getListedCodesSet(env); timings.listedCodes = Date.now() - t0;
     const filteredResult = listedCodes.size > 0 ? result.filter(r => listedCodes.has(r.stock_code)) : result;
 
     if (sort === "latest_change") filteredResult.sort((a, b) => b.latest_change - a.latest_change);
@@ -361,8 +361,8 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
         }
       } catch (e) { console.error("price fetch error:", e); }
     }
-    const finalData = topResult.map(r => ({ ...r, price: priceMap.get(r.stock_code) || null }));
-    const responseData = { meta: { market, limit, sort, weeks: weekDates.length, week_dates: weekDates, count: finalData.length, generated_at: new Date().toISOString() }, data: finalData };
+    const finalData = topResult.map(r => ({ ...r, price: priceMap.get(r.stock_code) || null })); timings.price = Date.now() - t0;
+    const responseData = { meta: { market, limit, sort, weeks: weekDates.length, week_dates: weekDates, count: finalData.length, generated_at: new Date().toISOString() }, data: finalData, ...(debug ? { _debug: { ...timings, total: Date.now() - t0, cacheEnabled: !!env.CACHE } } : {}) };
     const responseText = JSON.stringify(responseData);
     if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 1800 });
     return new Response(responseText, { headers: CORS_HEADERS });
