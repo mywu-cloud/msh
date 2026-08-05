@@ -114,8 +114,8 @@ async function getListedCodesSet(env: Env): Promise<Set<string>> {
       } catch (_e) { /* fall through and refetch */ }
     }
   }
-  const codes = new Set<string>();
-  for (const mode of [2, 4]) {
+  const codes = new Set<string>(); const fetchIsinMode = async (mode: number): Promise<string[]> => { const out: string[] = []; try { const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 6000); const res = await fetch(`https://isin.twse.com.tw/isin/C_public.jsp?strMode=${mode}`, { signal: ctrl.signal }); clearTimeout(timer); if (!res.ok) return out; const buf = await res.arrayBuffer(); const html = new TextDecoder("big5").decode(buf); const re = /<td bgcolor=#(?:FAFAD2|D5FFD5)>(\d{4,6}[A-Za-z]{0,2})\u3000/g; let m: RegExpExecArray | null; while ((m = re.exec(html)) !== null) out.push(m[1]); } catch (e) { console.error("getListedCodesSet fetch error:", e); } return out; }; const modeResults = await Promise.all([2, 4].map(fetchIsinMode)); for (const arr of modeResults) for (const c of arr) codes.add(c);
+  for (const mode of [] as number[]) {
     try {
       const res = await fetch(`https://isin.twse.com.tw/isin/C_public.jsp?strMode=${mode}`);
       if (!res.ok) continue;
