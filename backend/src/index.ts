@@ -563,25 +563,27 @@ async function handleUploadCsv(request: Request, env: Env): Promise<Response> {
   if (!contentType.includes("multipart/form-data") && !contentType.includes("text/csv") && !contentType.includes("application/octet-stream")) {
     return jsonResponse({ error: "請以 multipart/form-data 上傳 CSV" }, 400);
   }
-  let csvText = "", dateParam = "";
+  let csvText = "", dateParam = "", chunkIndexRaw = "";
   if (contentType.includes("multipart/form-data")) {
     const formData = await request.formData();
     const file = formData.get("file");
     if (!file || typeof file === "string") return jsonResponse({ error: "找不到 'file' 欄位" }, 400);
     csvText = await (file as File).text();
     dateParam = (formData.get("date") as string) || "";
+    chunkIndexRaw = (formData.get("chunk_index") as string) || "";
   } else {
     csvText = await request.text();
     const url = new URL(request.url);
     dateParam = url.searchParams.get("date") || "";
+    chunkIndexRaw = url.searchParams.get("chunk_index") || "";
   }
   if (!csvText.trim()) return jsonResponse({ error: "CSV 內容為空" }, 400);
   const lines = csvText.trim().split(/\r?\n/).filter(l => l.trim());
   const firstCells = lines[0].split(",").map(c => c.trim().replace(/^"|"$/g, ""));
-  return handleTdccCsv(lines, firstCells, dateParam, env);
+  return handleTdccCsv(lines, firstCells, dateParam, env, chunkIndexRaw);
 }
 
-async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: string, env: Env): Promise<Response> {
+async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: string, env: Env), chunkIndexRaw: string = "": Promise<Response> {
   const rows = lines.map(l => l.split(",").map(c => c.trim().replace(/^"|"$/g, "")));
   const firstCell = (firstCells[0] || "").trim();
   const isHeader = !/^[0-9A-Za-z]{3,8}$/.test(firstCell);
@@ -604,7 +606,8 @@ async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: s
   }
   if (!isoDate) isoDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   let inserted = 0, skipped = 0, errors = 0;
-  try { await env.DB.prepare("DELETE FROM distributions WHERE date = ?").bind(isoDate).run(); } catch(e) { console.error("DELETE error:", e); }
+  const isFirstChunk = !chunkIndexRaw || chunkIndexRaw === "0";
+  if (isFirstChunk) { try { await env.DB.prepare("DELETE FROM distributions WHERE date = ?").bind(isoDate).run(); } catch(e) { console.error("DELETE error:", e); } }
   let firstError = "";
   const BATCH = 100;
   for (let i = 0; i < dataRows.length; i += BATCH) {
