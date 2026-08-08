@@ -1278,6 +1278,7 @@ async function handleMigrateDistributions(request: Request, env: Env): Promise<R
       if (env.CACHE) {
         const list = await env.CACHE.list({ prefix: "bigholderchanges:v3:" });
                   for (const key of list.keys) { await env.CACHE.delete(key.name); }
+        const list2 = await env.DB ? await env.CACHE.list({ prefix: "stockdetail:v1:" }) : { keys: [] }; for (const key of list2.keys) { await env.CACHE.delete(key.name); }
           }
           return jsonResponse({ success: true, migrated: results });
     } catch (e) {
