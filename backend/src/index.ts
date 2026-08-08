@@ -1261,7 +1261,7 @@ async function handleRefreshPrices(request: Request, env: Env): Promise<Response
 async function handleMigrateDistributions(request: Request, env: Env): Promise<Response> {
     if (request.method !== "POST") return errorResponse("Method Not Allowed", 405);
     try {
-      const targetDates: Record<string, string> = { "20260605": "2026-06-05", "20260508": "2026-05-08" };      const results: Record<string, number> = {};
+      const targetDates: Record<string, string> = { "20260605": "2026-06-05", "20260508": "2026-05-08" };  
       const results: Record<string, number> = {};
       for (const compact of Object.keys(targetDates)) {
         const dashed = targetDates[compact];
