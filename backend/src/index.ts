@@ -1305,6 +1305,7 @@ async function handleInspectSchema(request: Request, env: Env): Promise<Response
     const dist508 = await env.DB.prepare("SELECT COUNT(*) as cnt FROM distributions WHERE date = '20260508'").all();
     const bracket605 = await env.DB.prepare("SELECT bracket, holders, ratio FROM distributions WHERE stock_code='2243' AND date='20260605'").all();
     const bracket612 = await env.DB.prepare("SELECT bracket, holders, ratio FROM distributions WHERE stock_code='2243' AND date='20260612'").all();
+    if (env.CACHE) { const list2 = await env.CACHE.list({ prefix: "stockdetail:v1:" }); for (const key of list2.keys) { await env.CACHE.delete(key.name); } const list3 = await env.CACHE.list({ prefix: "bigholderchanges:v3:" }); for (const key of list3.keys) { await env.CACHE.delete(key.name); } }
     return jsonResponse({ success: true, rows: rows.results || [], distinctDates: dateRows.results || [], sample605: sample605.results || [], hd605Count: hd605.results || [], dist605Count: dist605.results, numeric508Count: numeric508.results || [], dist508Count: dist508.results || [], numeric605Count: numeric605.results || [], bracket605: bracket605.results || [], bracket612: bracket612.results || [] });
   } catch (e) {
     console.error("handleInspectSchema error:", e);
