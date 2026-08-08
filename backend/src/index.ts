@@ -598,9 +598,11 @@ async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: s
     if (d >= 0) dateCol = d; if (s >= 0) stockCol = s; if (b >= 0) bracketCol = b;
     if (h >= 0) holdersCol = h; if (sh >= 0) sharesCol = sh; if (r >= 0) ratioCol = r;
   } else if (/^\d{8}$/.test(firstCell)) { dateCol = 0; stockCol = 1; bracketCol = 2; holdersCol = 3; sharesCol = 4; ratioCol = 5; }
+  const expectedCols = isHeader ? header.length : 0;
+  const normalizedDataRows = expectedCols > 0 ? dataRows.map(row => { if (row.length <= expectedCols) return row; const overflow = row.length - expectedCols; const merged = row.slice(bracketCol, bracketCol + overflow + 1).join(","); return [...row.slice(0, bracketCol), merged, ...row.slice(bracketCol + overflow + 1)]; }) : dataRows;
   let isoDate = (dateParam || "").replace(/-/g, "");
-  if (!isoDate && dataRows.length > 0 && dateCol >= 0) {
-    const v = (dataRows[0][dateCol] || "").trim();
+  if (!isoDate && normalizedDataRows.length > 0 && dateCol >= 0) {
+    const v = (normalizedDataRows[0][dateCol] || "").trim();
     if (/^\d{8}$/.test(v)) isoDate = v;
     else if (/^\d{4}-\d{2}-\d{2}$/.test(v)) isoDate = v.replace(/-/g, "");
   }
@@ -610,8 +612,8 @@ async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: s
   if (isFirstChunk) { try { await env.DB.prepare("DELETE FROM distributions WHERE date = ?").bind(isoDate).run(); } catch(e) { console.error("DELETE error:", e); } }
   let firstError = "";
   const BATCH = 100;
-  for (let i = 0; i < dataRows.length; i += BATCH) {
-    const batch = dataRows.slice(i, i + BATCH);
+  for (let i = 0; i < normalizedDataRows.length; i += BATCH) {
+    const batch = normalizedDataRows.slice(i, i + BATCH);
     if (!batch.length) continue;
     const stmts: D1PreparedStatement[] = [];
     let batchSkipped = 0;
