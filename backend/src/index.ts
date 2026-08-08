@@ -596,15 +596,15 @@ async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: s
     if (d >= 0) dateCol = d; if (s >= 0) stockCol = s; if (b >= 0) bracketCol = b;
     if (h >= 0) holdersCol = h; if (sh >= 0) sharesCol = sh; if (r >= 0) ratioCol = r;
   } else if (/^\d{8}$/.test(firstCell)) { dateCol = 0; stockCol = 1; bracketCol = 2; holdersCol = 3; sharesCol = 4; ratioCol = 5; }
-  let isoDate = dateParam;
+  let isoDate = (dateParam || "").replace(/-/g, "");
   if (!isoDate && dataRows.length > 0 && dateCol >= 0) {
     const v = (dataRows[0][dateCol] || "").trim();
     if (/^\d{8}$/.test(v)) isoDate = v;
-    else if (/^\d{4}-\d{2}-\d{2}$/.test(v)) isoDate = v;
+    else if (/^\d{4}-\d{2}-\d{2}$/.test(v)) isoDate = v.replace(/-/g, "");
   }
   if (!isoDate) isoDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   let inserted = 0, skipped = 0, errors = 0;
-  try { await env.DB.prepare("DELETE FROM distributions WHERE date = ?").bind(isoDate).run(); } catch(e) { console.error("DELETE error:", e); }
+  try { await env.DB.prepare("DELETE FROM holder_distribution WHERE date = ?").bind(isoDate).run(); } catch(e) { console.error("DELETE error:", e); }
   let firstError = "";
   const BATCH = 100;
   for (let i = 0; i < dataRows.length; i += BATCH) {
@@ -618,12 +618,12 @@ async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: s
       const code = (row[stockCol] || "").replace(/\s/g, "").substring(0, 10);
       if (!code || !/^[0-9A-Za-z]{3,8}$/.test(code)) { skipped++; batchSkipped++; continue; }
       let rowDate = isoDate;
-      if (dateCol >= 0 && row[dateCol]) { const raw = row[dateCol].trim(); if (/^\d{8}$/.test(raw)) rowDate = raw; else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) rowDate = raw; }
+      if (dateCol >= 0 && row[dateCol]) { const raw = row[dateCol].trim(); if (/^\d{8}$/.test(raw)) rowDate = raw; else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) rowDate = raw.replace(/-/g, ""); }
       const bracket = (row[bracketCol] || "").substring(0, 50);
       const holders = parseInt((row[holdersCol] || "0").replace(/,/g, "")) || 0;
       const shares = parseInt((row[sharesCol] || "0").replace(/,/g, "")) || 0;
       const ratio = parseFloat((row[ratioCol] || "0").replace(/,/g, "")) || 0;
-      stmts.push(env.DB.prepare("INSERT INTO distributions (stock_code, date, bracket, holders, shares, ratio) VALUES (?,?,?,?,?,?)").bind(code, rowDate, bracket, holders, shares, ratio));
+      stmts.push(env.DB.prepare("INSERT INTO holder_distribution (stock_code, date, bracket, holders, shares, ratio) VALUES (?,?,?,?,?,?)").bind(code, rowDate, bracket, holders, shares, ratio));
     }
     if (!stmts.length) continue;
     try {
