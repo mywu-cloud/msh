@@ -258,7 +258,7 @@ async function handleBigHolderChanges(request: Request, env: Env): Promise<Respo
   if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
 
   try {
-    const datesResult = await env.DB.prepare(`SELECT DISTINCT date FROM holder_distribution WHERE date != '20260605' ORDER BY date DESC LIMIT ${weeks + 1}`).all(); // 06/05 當週上傳資料有誤，且 TDCC 集保網站僅提供最近一週資料，無法重新下載回補，暫時排除該週
+const datesResult = await env.DB.prepare(`SELECT DISTINCT date FROM holder_distribution ORDER BY date DESC LIMIT ${weeks + 1}`).all(); // 06/05 當週資料已於重新上傳後修正，恢復納入計算
     const allDates = (datesResult.results || []).map((r: Record<string, unknown>) => r.date as string).sort();
     if (allDates.length < 2) return jsonResponse({ meta: { market, weeks: allDates.length, dates: allDates }, data: [] });
 
@@ -648,7 +648,7 @@ async function handleStockDetail(request: Request, env: Env, stockCode: string):
   const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
   if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
   try {
-    const datesResult = await env.DB.prepare("SELECT DISTINCT date FROM holder_distribution WHERE date != '20260605' ORDER BY date DESC LIMIT 13").all(); // 06/05 當週上傳資料有誤，且 TDCC 集保網站僅提供最近一週資料，無法重新下載回補，暫時排除該週
+    const datesResult = await env.DB.prepare("SELECT DISTINCT date FROM holder_distribution ORDER BY date DESC LIMIT 13").all(); // 06/05 當週資料已於重新上傳後修正，恢復納入計算
     const allDates = (datesResult.results || []).map((r: Record<string, unknown>) => r.date as string).sort();
     if (allDates.length < 2) return errorResponse("Insufficient data", 404);
     const weekDates = allDates.slice(-12);
