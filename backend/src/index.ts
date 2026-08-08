@@ -1282,7 +1282,19 @@ async function handleMigrateDistributions(request: Request, env: Env): Promise<R
     }
 }
 
-
+// --- Temporary diagnostic endpoint: inspect sqlite_master for holder_distribution ---
+async function handleInspectSchema(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") return errorResponse("Method Not Allowed", 405);
+  try {
+    const rows = await env.DB.prepare(
+      "SELECT type, name, sql FROM sqlite_master WHERE name = 'holder_distribution' OR (sql IS NOT NULL AND sql LIKE '%holder_distribution%')"
+    ).all();
+    return jsonResponse({ success: true, rows: rows.results || [] });
+  } catch (e) {
+    console.error("handleInspectSchema error:", e);
+    return errorResponse("Inspect failed: " + String(e), 500);
+  }
+}
 // ─── Main Router ─────────────────────────────────────────────────────────────
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -1295,6 +1307,7 @@ export default {
     if (path === "/api/stats" || path === "/api/stats/") return handleStats(env);
     if (path === "/api/upload-csv" || path === "/api/upload-csv/") return handleUploadCsv(request, env);
     if (path === "/api/admin/migrate-distributions") return handleMigrateDistributions(request, env);
+    if (path === "/api/admin/inspect-schema") return handleInspectSchema(request, env);
     if (path === "/api/industries" || path === "/api/industries/") return handleIndustries(request, env);
     if (path === "/api/screener-snapshot" || path === "/api/screener-snapshot/") return handleScreenerSnapshot(request, env);
     if (path === "/api/screener-history" || path === "/api/screener-history/") return handleScreenerHistory(request, env);
