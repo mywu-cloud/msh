@@ -583,7 +583,7 @@ async function handleUploadCsv(request: Request, env: Env): Promise<Response> {
   return handleTdccCsv(lines, firstCells, dateParam, env, chunkIndexRaw);
 }
 
-async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: string, env: Env), chunkIndexRaw: string = "": Promise<Response> {
+async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: string, env: Env, chunkIndexRaw: string = ""): Promise<Response> {
   const rows = lines.map(l => l.split(",").map(c => c.trim().replace(/^"|"$/g, "")));
   const firstCell = (firstCells[0] || "").trim();
   const isHeader = !/^[0-9A-Za-z]{3,8}$/.test(firstCell);
