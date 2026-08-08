@@ -1289,7 +1289,10 @@ async function handleInspectSchema(request: Request, env: Env): Promise<Response
     const rows = await env.DB.prepare(
       "SELECT type, name, sql FROM sqlite_master WHERE name = 'holder_distribution' OR (sql IS NOT NULL AND sql LIKE '%holder_distribution%')"
     ).all();
-    return jsonResponse({ success: true, rows: rows.results || [] });
+    const dateRows = await env.DB.prepare(
+      "SELECT DISTINCT date FROM distributions WHERE date LIKE '2026%' ORDER BY date"
+    ).all();
+    return jsonResponse({ success: true, rows: rows.results || [], distinctDates: dateRows.results || [] });
   } catch (e) {
     console.error("handleInspectSchema error:", e);
     return errorResponse("Inspect failed: " + String(e), 500);
