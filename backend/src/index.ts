@@ -1261,18 +1261,16 @@ async function handleRefreshPrices(request: Request, env: Env): Promise<Response
 async function handleMigrateDistributions(request: Request, env: Env): Promise<Response> {
     if (request.method !== "POST") return errorResponse("Method Not Allowed", 405);
     try {
-          const targetDates = ["20260605", "20260508"];
-          const results: Record<string, number> = {};
-          for (const d of targetDates) {
-                  await env.DB.prepare("DELETE FROM holder_distribution WHERE date = ?").bind(d).run();
-                  const ins = await env.DB.prepare(
-                            `INSERT INTO holder_distribution (stock_code, date, bracket, holders, shares, ratio)
-                                     SELECT stock_code, ?, bracket, holders, shares, ratio FROM distributions WHERE REPLACE(date, '-', '') = ?`
-                          ).bind(d, d).run();
-                  results[d] = ins.meta?.rows_written || 0;
-          }
-          if (env.CACHE) {
-                  const list = await env.CACHE.list({ prefix: "bigholderchanges:v3:" });
+      const targetDates: Record<string, string> = { "20260605": "2026-06-05", "20260508": "2026-05-08" };      const results: Record<string, number> = {};
+      const results: Record<string, number> = {};
+      for (const compact of Object.keys(targetDates)) {
+        const dashed = targetDates[compact];
+        await env.DB.prepare("DELETE FROM distributions WHERE date = ?").bind(compact).run();
+        const upd = await env.DB.prepare("UPDATE distributions SET date = ? WHERE date = ?").bind(compact, dashed).run();
+        results[compact] = upd.meta?.rows_written || 0;
+      }
+      if (env.CACHE) {
+        const list = await env.CACHE.list({ prefix: "bigholderchanges:v3:" });
                   for (const key of list.keys) { await env.CACHE.delete(key.name); }
           }
           return jsonResponse({ success: true, migrated: results });
