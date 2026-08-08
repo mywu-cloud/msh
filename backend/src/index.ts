@@ -583,6 +583,7 @@ async function handleUploadCsv(request: Request, env: Env): Promise<Response> {
   return handleTdccCsv(lines, firstCells, dateParam, env, chunkIndexRaw);
 }
 
+const BRACKET_LEVEL_MAP: Record<string, string> = { "1-999": "1", "1,000-5,000": "2", "5,001-10,000": "3", "10,001-15,000": "4", "15,001-20,000": "5", "20,001-30,000": "6", "30,001-40,000": "7", "40,001-50,000": "8", "50,001-100,000": "9", "100,001-200,000": "10", "200,001-400,000": "11", "400,001-600,000": "12", "600,001-800,000": "13", "800,001-1,000,000": "14", "more than 1,000,001": "15", "差異數調整（說明4）": "16", "total": "17" };
 async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: string, env: Env, chunkIndexRaw: string = ""): Promise<Response> {
   const rows = lines.map(l => l.split(",").map(c => c.trim().replace(/^"|"$/g, "")));
   const firstCell = (firstCells[0] || "").trim();
@@ -624,7 +625,7 @@ async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: s
       if (!code || !/^[0-9A-Za-z]{3,8}$/.test(code)) { skipped++; batchSkipped++; continue; }
       let rowDate = isoDate;
       if (dateCol >= 0 && row[dateCol]) { const raw = row[dateCol].trim(); if (/^\d{8}$/.test(raw)) rowDate = raw; else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) rowDate = raw.replace(/-/g, ""); }
-      const bracket = (row[bracketCol] || "").substring(0, 50);
+      const rawBracket = (row[bracketCol] || "").trim(); const bracket = (BRACKET_LEVEL_MAP[rawBracket.toLowerCase()] || rawBracket).substring(0, 50);
       const holders = parseInt((row[holdersCol] || "0").replace(/,/g, "")) || 0;
       const shares = parseInt((row[sharesCol] || "0").replace(/,/g, "")) || 0;
       const ratio = parseFloat((row[ratioCol] || "0").replace(/,/g, "")) || 0;
