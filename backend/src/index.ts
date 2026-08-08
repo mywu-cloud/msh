@@ -1254,6 +1254,35 @@ async function handleRefreshPrices(request: Request, env: Env): Promise<Response
   return jsonResponse(result);
 }
 
+// ─── One-time migration: distributions -> holder_distribution (20260605, 20260508) ─
+// Temporary admin endpoint. Copies rows for the given dates from the legacy
+// `distributions` table into `holder_distribution` (the table actually used by
+// the heatmap / stock-detail endpoints). Does NOT delete from `distributions`.
+async function handleMigrateDistributions(request: Request, env: Env): Promise<Response> {
+    if (request.method !== "POST") return errorResponse("Method Not Allowed", 405);
+    try {
+          const targetDates = ["20260605", "20260508"];
+          const results: Record<string, number> = {};
+          for (const d of targetDates) {
+                  await env.DB.prepare("DELETE FROM holder_distribution WHERE date = ?").bind(d).run();
+                  const ins = await env.DB.prepare(
+                            `INSERT INTO holder_distribution (stock_code, date, bracket, holders, shares, ratio)
+                                     SELECT stock_code, ?, bracket, holders, shares, ratio FROM distributions WHERE REPLACE(date, '-', '') = ?`
+                          ).bind(d, d).run();
+                  results[d] = ins.meta?.rows_written || 0;
+          }
+          if (env.CACHE) {
+                  const list = await env.CACHE.list({ prefix: "bigholderchanges:v3:" });
+                  for (const key of list.keys) { await env.CACHE.delete(key.name); }
+          }
+          return jsonResponse({ success: true, migrated: results });
+    } catch (e) {
+          console.error("handleMigrateDistributions error:", e);
+          return errorResponse("Migration failed: " + String(e), 500);
+    }
+}
+
+
 // ─── Main Router ─────────────────────────────────────────────────────────────
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -1265,6 +1294,7 @@ export default {
     if (path === "/api/search" || path === "/api/search/") return handleSearch(request, env);
     if (path === "/api/stats" || path === "/api/stats/") return handleStats(env);
     if (path === "/api/upload-csv" || path === "/api/upload-csv/") return handleUploadCsv(request, env);
+    if (path === "/api/admin/migrate-distributions") return handleMigrateDistributions(request, env);
     if (path === "/api/industries" || path === "/api/industries/") return handleIndustries(request, env);
     if (path === "/api/screener-snapshot" || path === "/api/screener-snapshot/") return handleScreenerSnapshot(request, env);
     if (path === "/api/screener-history" || path === "/api/screener-history/") return handleScreenerHistory(request, env);
