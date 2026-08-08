@@ -46,6 +46,7 @@ async function uploadCsvInChunks(file: File): Promise<FileResult> {
     const form = new FormData()
     form.append('file', new Blob([chunkCsv], { type: 'text/csv' }), file.name)
     form.append('source', 'tdcc')
+    form.append('chunk_index', String(i))
 
     const res = await fetch(`${API_BASE}/api/upload-csv`, { method: 'POST', body: form })
     if (!res.ok) {
