@@ -604,7 +604,7 @@ async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: s
   }
   if (!isoDate) isoDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   let inserted = 0, skipped = 0, errors = 0;
-  try { await env.DB.prepare("DELETE FROM holder_distribution WHERE date = ?").bind(isoDate).run(); } catch(e) { console.error("DELETE error:", e); }
+  try { await env.DB.prepare("DELETE FROM distributions WHERE date = ?").bind(isoDate).run(); } catch(e) { console.error("DELETE error:", e); }
   let firstError = "";
   const BATCH = 100;
   for (let i = 0; i < dataRows.length; i += BATCH) {
@@ -623,7 +623,7 @@ async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: s
       const holders = parseInt((row[holdersCol] || "0").replace(/,/g, "")) || 0;
       const shares = parseInt((row[sharesCol] || "0").replace(/,/g, "")) || 0;
       const ratio = parseFloat((row[ratioCol] || "0").replace(/,/g, "")) || 0;
-      stmts.push(env.DB.prepare("INSERT INTO holder_distribution (stock_code, date, bracket, holders, shares, ratio) VALUES (?,?,?,?,?,?)").bind(code, rowDate, bracket, holders, shares, ratio));
+      stmts.push(env.DB.prepare("INSERT INTO distributions (stock_code, date, bracket, holders, shares, ratio) VALUES (?,?,?,?,?,?)").bind(code, rowDate, bracket, holders, shares, ratio));
     }
     if (!stmts.length) continue;
     try {
