@@ -1260,58 +1260,6 @@ async function handleRefreshPrices(request: Request, env: Env): Promise<Response
   return jsonResponse(result);
 }
 
-// ─── One-time migration: distributions -> holder_distribution (20260605, 20260508) ─
-// Temporary admin endpoint. Copies rows for the given dates from the legacy
-// `distributions` table into `holder_distribution` (the table actually used by
-// the heatmap / stock-detail endpoints). Does NOT delete from `distributions`.
-async function handleMigrateDistributions(request: Request, env: Env): Promise<Response> {
-    if (request.method !== "POST") return errorResponse("Method Not Allowed", 405);
-    try {
-      const targetDates: Record<string, string> = { "20260605": "2026-06-05", "20260508": "2026-05-08" };  
-      const results: Record<string, number> = {};
-      for (const compact of Object.keys(targetDates)) {
-        const dashed = targetDates[compact];
-        await env.DB.prepare("DELETE FROM distributions WHERE date = ?").bind(compact).run();
-        const upd = await env.DB.prepare("UPDATE distributions SET date = ? WHERE date = ?").bind(compact, dashed).run();
-        results[compact] = upd.meta?.rows_written || 0;
-      }
-      if (env.CACHE) {
-        const list = await env.CACHE.list({ prefix: "bigholderchanges:v3:" });
-                  for (const key of list.keys) { await env.CACHE.delete(key.name); }
-        const list2 = await env.DB ? await env.CACHE.list({ prefix: "stockdetail:v1:" }) : { keys: [] }; for (const key of list2.keys) { await env.CACHE.delete(key.name); }
-          }
-          return jsonResponse({ success: true, migrated: results });
-    } catch (e) {
-          console.error("handleMigrateDistributions error:", e);
-          return errorResponse("Migration failed: " + String(e), 500);
-    }
-}
-
-// --- Temporary diagnostic endpoint: inspect sqlite_master for holder_distribution ---
-async function handleInspectSchema(request: Request, env: Env): Promise<Response> {
-  if (request.method !== "GET") return errorResponse("Method Not Allowed", 405);
-  try {
-    const rows = await env.DB.prepare(
-      "SELECT type, name, sql FROM sqlite_master WHERE name = 'holder_distribution' OR (sql IS NOT NULL AND sql LIKE '%holder_distribution%')"
-    ).all();
-    const dateRows = await env.DB.prepare(
-      "SELECT DISTINCT date FROM distributions WHERE date LIKE '2026%' ORDER BY date"
-    ).all();
-    const sample605 = await env.DB.prepare("SELECT DISTINCT stock_code FROM distributions WHERE date = '20260605' LIMIT 30").all();
-        const numeric605 = await env.DB.prepare("SELECT COUNT(DISTINCT stock_code) as cnt FROM distributions WHERE date = '20260605' AND stock_code GLOB '[0-9][0-9][0-9][0-9]'").all();
-    const hd605 = await env.DB.prepare("SELECT COUNT(*) as cnt FROM holder_distribution WHERE date = '20260605'").all();
-    const dist605 = await env.DB.prepare("SELECT COUNT(*) as cnt FROM distributions WHERE date = '20260605'").all();
-    const numeric508 = await env.DB.prepare("SELECT COUNT(DISTINCT stock_code) as cnt FROM distributions WHERE date = '20260508' AND stock_code GLOB '[0-9][0-9][0-9][0-9]'").all();
-    const dist508 = await env.DB.prepare("SELECT COUNT(*) as cnt FROM distributions WHERE date = '20260508'").all();
-    const bracket605 = await env.DB.prepare("SELECT bracket, holders, ratio FROM distributions WHERE stock_code='2243' AND date='20260605'").all();
-    const bracket612 = await env.DB.prepare("SELECT bracket, holders, ratio FROM distributions WHERE stock_code='2243' AND date='20260612'").all();
-    if (env.CACHE) { const list2 = await env.CACHE.list({ prefix: "stockdetail:v1:" }); for (const key of list2.keys) { await env.CACHE.delete(key.name); } const list3 = await env.CACHE.list({ prefix: "bigholderchanges:v3:" }); for (const key of list3.keys) { await env.CACHE.delete(key.name); } }
-    return jsonResponse({ success: true, rows: rows.results || [], distinctDates: dateRows.results || [], sample605: sample605.results || [], hd605Count: hd605.results || [], dist605Count: dist605.results, numeric508Count: numeric508.results || [], dist508Count: dist508.results || [], numeric605Count: numeric605.results || [], bracket605: bracket605.results || [], bracket612: bracket612.results || [] });
-  } catch (e) {
-    console.error("handleInspectSchema error:", e);
-    return errorResponse("Inspect failed: " + String(e), 500);
-  }
-}
 // ─── Main Router ─────────────────────────────────────────────────────────────
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -1323,8 +1271,6 @@ export default {
     if (path === "/api/search" || path === "/api/search/") return handleSearch(request, env);
     if (path === "/api/stats" || path === "/api/stats/") return handleStats(env);
     if (path === "/api/upload-csv" || path === "/api/upload-csv/") return handleUploadCsv(request, env);
-    if (path === "/api/admin/migrate-distributions") return handleMigrateDistributions(request, env);
-    if (path === "/api/admin/inspect-schema") return handleInspectSchema(request, env);
     if (path === "/api/industries" || path === "/api/industries/") return handleIndustries(request, env);
     if (path === "/api/screener-snapshot" || path === "/api/screener-snapshot/") return handleScreenerSnapshot(request, env);
     if (path === "/api/screener-history" || path === "/api/screener-history/") return handleScreenerHistory(request, env);
