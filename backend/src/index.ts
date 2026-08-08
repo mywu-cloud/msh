@@ -1290,7 +1290,10 @@ async function handleInspectSchema(request: Request, env: Env): Promise<Response
     const dateRows = await env.DB.prepare(
       "SELECT DISTINCT date FROM distributions WHERE date LIKE '2026%' ORDER BY date"
     ).all();
-    return jsonResponse({ success: true, rows: rows.results || [], distinctDates: dateRows.results || [] });
+    const sample605 = await env.DB.prepare("SELECT stock_code, bracket, holders, shares, ratio FROM distributions WHERE date = '20260605' LIMIT 5").all();
+    const hd605 = await env.DB.prepare("SELECT COUNT(*) as cnt FROM holder_distribution WHERE date = '20260605'").all();
+    const dist605 = await env.DB.prepare("SELECT COUNT(*) as cnt FROM distributions WHERE date = '20260605'").all();
+    return jsonResponse({ success: true, rows: rows.results || [], distinctDates: dateRows.results || [], sample605: sample605.results || [], hd605Count: hd605.results || [], dist605Count: dist605.results || [] });  
   } catch (e) {
     console.error("handleInspectSchema error:", e);
     return errorResponse("Inspect failed: " + String(e), 500);
