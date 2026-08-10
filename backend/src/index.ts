@@ -1251,6 +1251,55 @@ async function handleGetPrices(request: Request, env: Env): Promise<Response> {
     return errorResponse("Prices query failed", 500);
   }
 }
+// ─── handleFetchFinMindDistribution：用 FinMind 補一天全市場股權分散表 ──────────
+async function handleFetchFinMindDistribution(request: Request, env: Env): Promise<Response> {
+    if (request.method !== "POST") return jsonResponse({ error: "Method Not Allowed" }, 405);
+    if (!env.FINMIND_TOKEN) {
+          return errorResponse("FINMIND_TOKEN not configured on this Worker (set via: wrangler secret put FINMIND_TOKEN)", 501);
+    }
+    const url = new URL(request.url);
+    const dateParam = (url.searchParams.get("date") || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) return errorResponse("請提供 ?date=YYYY-MM-DD", 400);
+    const isoDate = dateParam.replace(/-/g, "");
+
+    const apiUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockHoldingSharesPer&start_date=${dateParam}&end_date=${dateParam}&token=${encodeURIComponent(env.FINMIND_TOKEN)}`;
+    const res = await fetch(apiUrl, { headers: { "User-Agent": "MSH-API/3.0" }, cf: { cacheTtl: 0, cacheEverything: false } });
+    if (!res.ok) return errorResponse(`FinMind API error: ${res.status}`, 502);
+    const json = await res.json() as { data?: Array<{ stock_id: string; HoldingSharesLevel: string; people: number; unit: number; percent: number }> };
+    const rows = json.data || [];
+    if (!rows.length) return jsonResponse({ success: false, message: "FinMind 該日期沒有資料", date: isoDate });
+
+    await env.DB.prepare("DELETE FROM distributions WHERE date = ?").bind(isoDate).run();
+
+    let inserted = 0, skipped = 0, errors = 0, firstError = "";
+    const BATCH = 100;
+    for (let i = 0; i < rows.length; i += BATCH) {
+          const batch = rows.slice(i, i + BATCH);
+          const stmts: D1PreparedStatement[] = [];
+          for (const row of batch) {
+                  const code = (row.stock_id || "").trim();
+                  if (!code || !/^[0-9A-Za-z]{3,8}$/.test(code)) { skipped++; continue; }
+                  const rawBracket = (row.HoldingSharesLevel || "").trim();
+                  const bracket = (BRACKET_LEVEL_MAP[rawBracket.toLowerCase()] || rawBracket).substring(0, 50);
+                  const holders = row.people || 0;
+                  const shares = row.unit || 0;
+                  const ratio = row.percent || 0;
+                  stmts.push(env.DB.prepare("INSERT INTO distributions (stock_code, date, bracket, holders, shares, ratio) VALUES (?,?,?,?,?,?)").bind(code, isoDate, bracket, holders, shares, ratio));
+          }
+          if (!stmts.length) continue;
+          try {
+                  const results = await env.DB.batch(stmts);
+                  const ok = results.filter(r => r.success).length;
+                  inserted += ok; errors += stmts.length - ok;
+          } catch (e) { if (!firstError) firstError = e instanceof Error ? e.message : String(e); errors += stmts.length; }
+    }
+    if (env.CACHE) {
+          await env.CACHE.delete(`bigholderchanges:v3:twse:5000:total_change:6:p::`);
+          await env.CACHE.delete(`bigholderchanges:v3:tpex:5000:total_change:6:p::`);
+          await env.CACHE.delete(`bigholderchanges:v3:all:5000:total_change:6:p::`);
+    }
+    return jsonResponse({ success: inserted > 0, source: "finmind", message: `FinMind：匯入 ${inserted} 筆，略過 ${skipped} 筆，失敗 ${errors} 筆`, date: isoDate, total_rows: rows.length, inserted, skipped, errors, ...(firstError ? { first_error: firstError } : {}) });
+}
 
 // ─── handleRefreshPrices (POST) ──────────────────────────────────────────────
 // Manual trigger for price refresh
@@ -1299,11 +1348,13 @@ export default {
           "POST /api/upload-csv (multipart/form-data: file, date?)",
           "POST /api/screener-snapshot {snapshot_date, market, stocks:[]}",
           "GET /api/screener-history?market=all&date=&stock_code=&limit=100",
+                    "POST /api/admin/fetch-finmind-distribution?date=YYYY-MM-DD (重抓單日全市場股權分散表，需 FINMIND_TOKEN)",
         ],
       });
     }
         if (path === "/api/prices" || path === "/api/prices/") return handleGetPrices(request, env);
     if (path === "/api/refresh-prices" || path === "/api/refresh-prices/") return handleRefreshPrices(request, env);
+        if (path === "/api/admin/fetch-finmind-distribution") return handleFetchFinMindDistribution(request, env);
     return errorResponse("Not found", 404);
   },
 
