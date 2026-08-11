@@ -359,7 +359,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">累計</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">持有%</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">評分</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs hidden md:table-cell">{priceDate ? priceDate + ' 收盤' : '收盤'}</th>
+              <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs hidden md:table-cell">{priceDate ? priceDate + ' 收盤' : '收盤'}</th>              <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs hidden md:table-cell">漲跌</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs hidden md:table-cell">漲跌%</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">信號</th>
             </tr>
@@ -391,7 +391,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
                       </span>
                     )}
                   </td>
-                  <td className="text-center px-2 py-2 text-xs hidden md:table-cell">{rowPrice?.close ? rowPrice.close.toFixed(2) : '—'}</td>
+                  <td className="text-center px-2 py-2 text-xs hidden md:table-cell">{rowPrice?.close ? rowPrice.close.toFixed(2) : '—'}</td><td className={clsx('text-center px-2 py-2 text-xs hidden md:table-cell', rowPrice && rowPrice.change > 0 ? 'text-red-600' : rowPrice && rowPrice.change < 0 ? 'text-green-600' : 'text-slate-400')}>{rowPrice?.change != null ? (rowPrice.change > 0 ? '+' : '') + rowPrice.change.toFixed(2) : '—'}</td>
                   <td className={clsx('text-center px-2 py-2 text-xs hidden md:table-cell', rowPrice && rowPrice.change_pct > 0 ? 'text-red-600' : rowPrice && rowPrice.change_pct < 0 ? 'text-green-600' : 'text-slate-400')}>
                     {rowPrice?.change_pct != null ? (rowPrice.change_pct > 0 ? '+' : '') + rowPrice.change_pct.toFixed(2) + '%' : '—'}
                   </td>
@@ -420,6 +420,11 @@ function WeeklyChangesPanel({ market }: { market: Market }) {
     `${API_BASE}/api/top-changes?market=${market}&type=${type}&limit=20`,
     fetcher, { refreshInterval: 60000 }
   )
+  const { data: pricesData } = useSWR<{ trade_date: string; data: Record<string, { close: number; change: number; change_pct: number }> }>(
+        `${API_BASE}/api/prices`,
+        fetcher, { revalidateOnFocus: false, refreshInterval: 3600000 }
+      )
+    const priceMap = pricesData?.data || {}
   const data: StockChange[] = Array.isArray(rawData) ? rawData : ((rawData as ApiResponse)?.data || [])
   const filtered = data.filter(s => shouldInclude(s))
 
@@ -464,7 +469,12 @@ function WeeklyChangesPanel({ market }: { market: Market }) {
                   {s.industry && <div className="text-xs text-slate-400 mt-0.5">{s.industry}</div>}
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className={clsx('text-sm font-bold', pos ? 'text-red-600' : change < 0 ? 'text-green-600' : 'text-slate-400')}>{pos ? '+' : ''}{change.toFixed(2)}%</span>
+                  {priceMap[s.stock_code]?.close != null && (
+                                    <span className={clsx('text-xs', priceMap[s.stock_code].change_pct > 0 ? 'text-red-600' : priceMap[s.stock_code].change_pct < 0 ? 'text-green-600' : 'text-slate-400')}>
+                                      {priceMap[s.stock_code].close.toFixed(2)} ({priceMap[s.stock_code].change_pct > 0 ? '+' : ''}{priceMap[s.stock_code].change_pct.toFixed(2)}%)
+                                    </span>
+                                  )}
+                                    <span className={clsx('text-sm font-bold', pos ? 'text-red-600' : change < 0 ? 'text-green-600' : 'text-slate-400')}>{pos ? '+' : ''}{change.toFixed(2)}%</span>
                   <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500" />
                 </div>
               </Link>
@@ -479,7 +489,7 @@ function WeeklyChangesPanel({ market }: { market: Market }) {
 // ─── 12週籌碼熱力圖 Panel ─────────────────────────────────────────────────────
 function HeatmapPanel({ market }: { market: Market }) {
   const { data, isLoading } = useSWR<BHResponse>(
-    `${API_BASE}/api/big-holder-changes?market=${market}&limit=50&sort=total_change&weeks=12`,
+    `${API_BASE}/api/big-holder-changes?market=${market}&limit=50&sort=total_change&weeks=12&include_price=1`,
     fetcher, { revalidateOnFocus: false }
   )
   if (isLoading) return <div className="flex items-center justify-center py-8 text-slate-400 text-sm"><span className="animate-spin mr-2">⟳</span>計算熱力圖...</div>
@@ -527,6 +537,8 @@ function HeatmapPanel({ market }: { market: Market }) {
             <th className="text-left px-2 py-1.5 text-slate-500 font-medium sticky left-0 bg-white min-w-[100px]">股票</th>
             {weekDates.map(d => <th key={d} className="text-center px-1 py-1.5 text-slate-400 font-medium min-w-[42px]">{formatDate(d)}</th>)}
             <th className="text-center px-2 py-1.5 text-slate-500 font-medium">累計</th>
+            <th className="text-center px-2 py-1.5 text-slate-500 font-medium">收盤</th>
+          <th className="text-center px-2 py-1.5 text-slate-500 font-medium">漲跌%</th>
           </tr>
         </thead>
         <tbody>
@@ -547,6 +559,8 @@ function HeatmapPanel({ market }: { market: Market }) {
               <td className={`text-center px-2 py-1 font-bold ${row.total_change > 0 ? 'text-red-600' : 'text-green-600'}`}>
                 {row.total_change > 0 ? '+' : ''}{row.total_change.toFixed(2)}
               </td>
+              <td className="text-center px-2 py-1 text-slate-700">{row.price?.close ? row.price.close.toFixed(2) : '—'}</td>
+            <td className={`text-center px-2 py-1 ${row.price && row.price.change_pct > 0 ? 'text-red-600' : row.price && row.price.change_pct < 0 ? 'text-green-600' : 'text-slate-400'}`}>{row.price?.change_pct != null ? (row.price.change_pct > 0 ? '+' : '') + row.price.change_pct.toFixed(2) + '%' : '—'}</td></td>
             </tr>
           ))}
         </tbody>
@@ -558,7 +572,7 @@ function HeatmapPanel({ market }: { market: Market }) {
 // ─── 股東人數背離警示 Panel ───────────────────────────────────────────────────
 function DivergencePanel({ market }: { market: Market }) {
   const { data, isLoading } = useSWR<BHResponse>(
-    `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=6`,
+    `${API_BASE}/api/big-holder-changes?market=${market}&limit=5000&sort=total_change&weeks=6&include_price=1`,
     fetcher, { revalidateOnFocus: false }
   )
   if (isLoading) return <div className="flex items-center justify-center py-8 text-slate-400 text-sm"><span className="animate-spin mr-2">⟳</span>分析中...</div>
@@ -576,7 +590,7 @@ function DivergencePanel({ market }: { market: Market }) {
             {strongBuy.map(row => {
               const recent3 = weekDates.slice(-3).map(d => row.week_changes[d] ?? 0)
               return <Link key={row.stock_code} href={`/stock/${row.stock_code}`} className="flex items-center gap-3 px-2 py-2.5 hover:bg-slate-50 group">
-                <div className="flex-1"><span className="font-semibold text-slate-800 group-hover:text-primary-600">{row.stock_code}</span>{row.stock_name && <span className="ml-1.5 text-xs text-slate-500">{row.stock_name}</span>}{row.industry && <span className="ml-1.5 text-xs text-slate-400">{row.industry}</span>}</div>
+                <div className="flex-1"><span className="font-semibold text-slate-800 group-hover:text-primary-600">{row.stock_code}</span>{row.stock_name && <span className="ml-1.5 text-xs text-slate-500">{row.stock_name}</span>}{row.industry && <span className="ml-1.5 text-xs text-slate-400">{row.industry}</span>}{row.price?.close != null && <span className={clsx('ml-1.5 text-xs', row.price.change_pct > 0 ? 'text-red-600' : row.price.change_pct < 0 ? 'text-green-600' : 'text-slate-400')}>{row.price.close.toFixed(2)} ({row.price.change_pct > 0 ? '+' : ''}{row.price.change_pct.toFixed(2)}%)</span>}</div>
                 <div className="flex items-center gap-1.5 text-xs">
                   {recent3.map((v, i) => <span key={i} className={clsx('px-1.5 py-0.5 rounded font-medium', v > 0 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600')}>{v > 0 ? '+' : ''}{v.toFixed(2)}</span>)}
                   <span className="ml-1 font-bold text-red-700">累計+{row.total_change.toFixed(2)}</span>
@@ -593,7 +607,7 @@ function DivergencePanel({ market }: { market: Market }) {
           <div className="divide-y divide-slate-100">
             {strongSell.map(row => (
               <Link key={row.stock_code} href={`/stock/${row.stock_code}`} className="flex items-center gap-3 px-2 py-2.5 hover:bg-slate-50 group">
-                <div className="flex-1"><span className="font-semibold text-slate-800 group-hover:text-primary-600">{row.stock_code}</span>{row.stock_name && <span className="ml-1.5 text-xs text-slate-500">{row.stock_name}</span>}{row.industry && <span className="ml-1.5 text-xs text-slate-400">{row.industry}</span>}</div>
+                <div className="flex-1"><span className="font-semibold text-slate-800 group-hover:text-primary-600">{row.stock_code}</span>{row.stock_name && <span className="ml-1.5 text-xs text-slate-500">{row.stock_name}</span>}{row.industry && <span className="ml-1.5 text-xs text-slate-400">{row.industry}</span>}{row.price?.close != null && <span className={clsx('ml-1.5 text-xs', row.price.change_pct > 0 ? 'text-red-600' : row.price.change_pct < 0 ? 'text-green-600' : 'text-slate-400')}>{row.price.close.toFixed(2)} ({row.price.change_pct > 0 ? '+' : ''}{row.price.change_pct.toFixed(2)}%)</span>}</div>
                 <span className="text-sm font-bold text-green-700">{row.latest_change.toFixed(2)}%</span>
                 <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500" />
               </Link>
