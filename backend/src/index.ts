@@ -1269,7 +1269,7 @@ async function handleFetchFinMindDistribution(request: Request, env: Env): Promi
     const rows = json.data || [];
     if (!rows.length) return jsonResponse({ success: false, message: "FinMind 該日期沒有資料", date: isoDate });
 
-    await env.DB.prepare("DELETE FROM distributions WHERE date = ?").bind(isoDate).run();
+    await env.DB.prepare("DELETE FROM distributions WHERE date = ? OR date = ?").bind(isoDate, dateParam).run();
 
     let inserted = 0, skipped = 0, errors = 0, firstError = "";
     const BATCH = 100;
@@ -1294,9 +1294,12 @@ async function handleFetchFinMindDistribution(request: Request, env: Env): Promi
           } catch (e) { if (!firstError) firstError = e instanceof Error ? e.message : String(e); errors += stmts.length; }
     }
     if (env.CACHE) {
-          await env.CACHE.delete(`bigholderchanges:v3:twse:5000:total_change:6:p::`);
-          await env.CACHE.delete(`bigholderchanges:v3:tpex:5000:total_change:6:p::`);
-          await env.CACHE.delete(`bigholderchanges:v3:all:5000:total_change:6:p::`);
+            try {
+                      const bhcList = await env.CACHE.list({ prefix: "bigholderchanges:v3:" });
+                      for (const k of bhcList.keys) await env.CACHE.delete(k.name);
+                      const distList = await env.CACHE.list({ prefix: "dist:" });
+                      for (const k of distList.keys) await env.CACHE.delete(k.name);
+            } catch (e) { console.error("cache clear error:", e); }
     }
     return jsonResponse({ success: inserted > 0, source: "finmind", message: `FinMind：匯入 ${inserted} 筆，略過 ${skipped} 筆，失敗 ${errors} 筆`, date: isoDate, total_rows: rows.length, inserted, skipped, errors, ...(firstError ? { first_error: firstError } : {}) });
 }
