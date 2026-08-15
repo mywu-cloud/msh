@@ -268,6 +268,13 @@ function ScreenerWithSave({ market }: { market: Market }) {
   const priceMap = pricesData?.data || {}
   const priceDate = pricesData?.trade_date ? (pricesData.trade_date.slice(4,6) + '/' + pricesData.trade_date.slice(6,8)) : ''
 
+  const { data: industriesData } = useSWR<{ market: string; industries: string[] }>(
+    `${API_BASE}/api/industries?market=${market}`,
+    fetcher,
+    { revalidateOnFocus: false }
+  )
+  const industries = industriesData?.industries || []
+
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [saveMsg, setSaveMsg] = useState('')
   const [showExplain, setShowExplain] = useState(false)
@@ -276,12 +283,32 @@ function ScreenerWithSave({ market }: { market: Market }) {
   const [volumeMultiplier, setVolumeMultiplier] = useState(1.5)
   const [techMap, setTechMap] = useState<Record<string, TechnicalResponse | null>>({})
   const [techLoading, setTechLoading] = useState(false)
+  const [industryFilter, setIndustryFilter] = useState('')
+  const [minRatio, setMinRatio] = useState(0)
+  const [maxRatio, setMaxRatio] = useState(100)
 
   const rows: BHRow[] = data?.data || []
   const weekDates = data?.meta?.week_dates || (rows[0]?.week_dates || [])
 
-  const baseScored: ScoredRow[] = rows
-    .filter(r => shouldInclude(r) && r.total_change > 0 && r.latest_ratio > 10)
+  // 篩選池：先套用產業別 + 大股東持有% 範圍篩選，作為統計列與評分的共同基礎
+  const filteredPool: BHRow[] = rows.filter(r =>
+    shouldInclude(r) &&
+    (industryFilter === '' || r.industry === industryFilter) &&
+    r.latest_ratio >= minRatio && r.latest_ratio <= maxRatio
+  )
+
+  const recentWeeks = weekDates.slice(-3)
+  const streakUpCount = filteredPool.filter(r => recentWeeks.length > 0 && recentWeeks.every(d => (r.week_changes[d] ?? 0) > 0)).length
+  const streakDownCount = filteredPool.filter(r => recentWeeks.length > 0 && recentWeeks.every(d => (r.week_changes[d] ?? 0) < 0)).length
+  const avgRatio = filteredPool.length ? filteredPool.reduce((s, r) => s + r.latest_ratio, 0) / filteredPool.length : 0
+  let todayUpCount = 0, todayDownCount = 0
+  for (const r of filteredPool) {
+    const p = priceMap[r.stock_code] || r.price
+    if (p) { if (p.change_pct > 0) todayUpCount++; else if (p.change_pct < 0) todayDownCount++ }
+  }
+
+  const baseScored: ScoredRow[] = filteredPool
+    .filter(r => r.total_change > 0 && r.latest_ratio > 10)
     .map(r => ({ ...r, score: scoreStock(r, weekDates) }))
     .sort((a, b) => b.score - a.score)
 
@@ -367,7 +394,6 @@ function ScreenerWithSave({ market }: { market: Market }) {
   }
 
   if (isLoading) return <div className="flex items-center justify-center py-8 text-slate-400 text-sm"><span className="animate-spin mr-2 text-lg">⟳</span>分析中...</div>
-  if (scored.length === 0) return <div className="flex items-center justify-center py-8 text-slate-400 text-sm">暫無符合條件標的</div>
 
   const displayDates = weekDates.slice(-6)
 
@@ -376,6 +402,19 @@ function ScreenerWithSave({ market }: { market: Market }) {
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap gap-2">
         <span className="text-xs text-slate-500">Top 20 起漲潛力標的 · {market === 'twse' ? '上市' : market === 'tpex' ? '上櫃' : 'ETF'}</span>
         <div className="flex items-center gap-2 flex-wrap">
+          <label className="flex items-center gap-1 text-xs text-slate-500">
+            產業
+            <select value={industryFilter} onChange={e => setIndustryFilter(e.target.value)} className="border border-slate-200 rounded px-1 py-0.5 text-xs max-w-[8rem]">
+              <option value="">全部</option>
+              {industries.map(ind => <option key={ind} value={ind}>{ind}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-1 text-xs text-slate-500">
+            持有%
+            <input type="number" min={0} max={100} value={minRatio} onChange={e => setMinRatio(Number(e.target.value) || 0)} className="w-12 border border-slate-200 rounded px-1 py-0.5" />
+            ~
+            <input type="number" min={0} max={100} value={maxRatio} onChange={e => setMaxRatio(Number(e.target.value) || 0)} className="w-12 border border-slate-200 rounded px-1 py-0.5" />
+          </label>
           <label className="flex items-center gap-1 text-xs text-slate-500">
             <input type="checkbox" checked={useResonance} onChange={e => setUseResonance(e.target.checked)} />
             技術指標共振
@@ -407,7 +446,17 @@ function ScreenerWithSave({ market }: { market: Market }) {
           </button>
         </div>
       </div>
+      <div className="flex items-center gap-4 flex-wrap px-4 py-2 border-b border-slate-100 text-xs text-slate-500">
+        <span>篩選結果 <b className="text-slate-700">{filteredPool.length}</b> 檔</span>
+        <span>連增≥3週 <b className="text-red-600">{streakUpCount}</b> 檔</span>
+        <span>連減≥3週 <b className="text-green-600">{streakDownCount}</b> 檔</span>
+        <span>平均持有% <b className="text-slate-700">{avgRatio.toFixed(1)}%</b></span>
+        <span>今日漲跌 <b className="text-red-600">{todayUpCount}</b>↑ / <b className="text-green-600">{todayDownCount}</b>↓</span>
+      </div>
       {showExplain && <ScoringExplanation useResonance={useResonance} kThreshold={kThreshold} volumeMultiplier={volumeMultiplier} />}
+      {scored.length === 0 ? (
+        <div className="flex items-center justify-center py-8 text-slate-400 text-sm">暫無符合條件標的</div>
+      ) : (
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -469,6 +518,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   )
 }
