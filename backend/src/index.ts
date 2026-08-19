@@ -391,6 +391,76 @@ async function handleIndustries(request: Request, env: Env): Promise<Response> {
   } catch (err) { return errorResponse("Query failed", 500); }
 }
 
+// ─── handleConcepts (概念股) ───────────────────────────────────────────────────
+async function handleConcepts(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const market = url.searchParams.get("market") || "";
+  const cacheKey = `concepts:v1:${market}`;
+  const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
+  if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
+  try {
+    let sql: string;
+    const params: string[] = [];
+    if (market === "twse" || market === "tpex") {
+      sql = `SELECT sc.stock_code, sc.concept FROM stock_concepts sc JOIN stock_info si ON sc.stock_code = si.stock_code WHERE si.market = ? ORDER BY sc.concept ASC`;
+      params.push(market);
+    } else {
+      sql = `SELECT stock_code, concept FROM stock_concepts ORDER BY concept ASC`;
+    }
+    const result = await env.DB.prepare(sql).bind(...params).all();
+    const rows = (result.results || []) as unknown as { stock_code: string; concept: string }[];
+    const concepts = Array.from(new Set(rows.map(r => r.concept))).sort();
+    const map: Record<string, string[]> = {};
+    for (const r of rows) {
+      if (!map[r.stock_code]) map[r.stock_code] = [];
+      map[r.stock_code].push(r.concept);
+    }
+    const responseText = JSON.stringify({ market, concepts, map });
+    if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 3600 });
+    return new Response(responseText, { headers: CORS_HEADERS });
+  } catch (err) { return errorResponse("Query failed", 500); }
+}
+
+// ─── handleAdminConceptsUpsert (POST) ─────────────────────────────────────────
+// Body: { stock_code: string, concepts: string[] } -- replaces all concept tags for that stock
+async function handleAdminConceptsUpsert(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") return errorResponse("Method Not Allowed", 405);
+  try {
+    const body = await request.json() as { stock_code: string; concepts: string[] };
+    if (!body.stock_code || !Array.isArray(body.concepts)) return errorResponse("stock_code and concepts[] required");
+    const code = body.stock_code.trim().toUpperCase();
+    if (!/^[0-9A-Z]{3,8}$/.test(code)) return errorResponse("Invalid stock code");
+    const concepts = body.concepts.map(c => String(c).trim()).filter(Boolean).slice(0, 20);
+    await env.DB.prepare("DELETE FROM stock_concepts WHERE stock_code = ?").bind(code).run();
+    if (concepts.length) {
+      const stmts = concepts.map(c => env.DB.prepare("INSERT OR REPLACE INTO stock_concepts (stock_code, concept) VALUES (?,?)").bind(code, c));
+      await env.DB.batch(stmts);
+    }
+    if (env.CACHE) {
+      const keys = await env.CACHE.list({ prefix: "concepts:v1:" });
+      for (const k of keys.keys) await env.CACHE.delete(k.name);
+    }
+    return jsonResponse({ success: true, stock_code: code, concepts });
+  } catch (err) {
+    console.error("handleAdminConceptsUpsert error:", err);
+    return errorResponse("Upsert failed: " + String(err), 500);
+  }
+}
+
+// ─── handleAdminConceptsList (GET) ────────────────────────────────────────────
+async function handleAdminConceptsList(env: Env): Promise<Response> {
+  try {
+    const result = await env.DB.prepare("SELECT stock_code, concept FROM stock_concepts ORDER BY stock_code ASC, concept ASC").all();
+    const rows = (result.results || []) as unknown as { stock_code: string; concept: string }[];
+    const map: Record<string, string[]> = {};
+    for (const r of rows) {
+      if (!map[r.stock_code]) map[r.stock_code] = [];
+      map[r.stock_code].push(r.concept);
+    }
+    return jsonResponse({ count: Object.keys(map).length, data: map });
+  } catch (err) { return errorResponse("Query failed", 500); }
+}
+
 // ─── handleStats ──────────────────────────────────────────────────────────────
 async function handleStats(env: Env): Promise<Response> {
   try {
@@ -1320,6 +1390,9 @@ export default {
     if (path === "/api/stats" || path === "/api/stats/") return handleStats(env);
     if (path === "/api/upload-csv" || path === "/api/upload-csv/") return handleUploadCsv(request, env);
     if (path === "/api/industries" || path === "/api/industries/") return handleIndustries(request, env);
+    if (path === "/api/concepts" || path === "/api/concepts/") return handleConcepts(request, env);
+    if (path === "/api/admin/concepts" && request.method === "POST") return handleAdminConceptsUpsert(request, env);
+    if (path === "/api/admin/concepts" && request.method === "GET") return handleAdminConceptsList(env);
     if (path === "/api/screener-snapshot" || path === "/api/screener-snapshot/") return handleScreenerSnapshot(request, env);
     if (path === "/api/screener-history" || path === "/api/screener-history/") return handleScreenerHistory(request, env);
     const distMatch = path.match(/^\/api\/distribution\/([A-Z0-9]+)$/i);
@@ -1344,6 +1417,9 @@ export default {
           "GET /api/stats",
           "GET /api/technical/:stockCode (daily volume + KD + MACD, requires FINMIND_TOKEN)",
           "GET /api/industries?market=twse|tpex",
+      "GET /api/concepts?market=twse|tpex (概念股標籤與 stock_code 對應清單)",
+      "POST /api/admin/concepts {stock_code, concepts:[]} (覆寫該股票的概念標籤)",
+      "GET /api/admin/concepts (列出全部概念股標籤)",
           "POST /api/upload-csv (multipart/form-data: file, date?)",
           "POST /api/screener-snapshot {snapshot_date, market, stocks:[]}",
           "GET /api/screener-history?market=all&date=&stock_code=&limit=100",
