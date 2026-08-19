@@ -34,6 +34,32 @@ function IndustrySelect({ market, value, onChange }: {
   )
 }
 
+interface ConceptsResp { concepts: string[]; map: Record<string, string[]> }
+
+function ConceptSelect({ market, value, onChange }: {
+  market: 'twse' | 'tpex'
+  value: string
+  onChange: (v: string) => void
+}) {
+  const { data } = useSWR<ConceptsResp>(
+    `${API_BASE}/api/concepts?market=${market}`,
+    fetcher,
+    { revalidateOnFocus: false }
+  )
+  const concepts: string[] = data?.concepts || []
+  if (concepts.length === 0) return null
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className="text-sm border border-slate-200 rounded px-2 py-1.5 text-slate-600 bg-white hover:border-slate-300 focus:outline-none focus:border-primary-400"
+    >
+      <option value="">全部概念股</option>
+      {concepts.map(c => <option key={c} value={c}>{c}</option>)}
+    </select>
+  )
+}
+
 type TabId = 'twse' | 'tpex'
 
 const TABS: { id: TabId; label: string; sub: string }[] = [
@@ -46,6 +72,8 @@ export default function HomePage() {
   const [activeTab, setActiveTab] = useState<TabId>('twse')
   const [twseIndustry, setTwseIndustry] = useState('')
   const [tpexIndustry, setTpexIndustry] = useState('')
+  const [twseConcept, setTwseConcept] = useState('')
+  const [tpexConcept, setTpexConcept] = useState('')
 
   return (
     <div className="space-y-4">
@@ -81,15 +109,21 @@ export default function HomePage() {
             {activeTab === 'tpex' && (
               <IndustrySelect market="tpex" value={tpexIndustry} onChange={setTpexIndustry} />
             )}
+            {activeTab === 'twse' && (
+              <ConceptSelect market="twse" value={twseConcept} onChange={setTwseConcept} />
+            )}
+            {activeTab === 'tpex' && (
+              <ConceptSelect market="tpex" value={tpexConcept} onChange={setTpexConcept} />
+            )}
             <span className="text-sm text-slate-500">集保所 TDCC</span>
           </div>
         </div>
 
         {activeTab === 'twse' && (
-          <SkillDashboard market="twse" searchQuery={searchQuery} industry={twseIndustry} showEtf={false} etfOnly={false} />
+          <SkillDashboard market="twse" searchQuery={searchQuery} industry={twseIndustry} showEtf={false} etfOnly={false} concept={twseConcept} />
         )}
         {activeTab === 'tpex' && (
-          <SkillDashboard market="tpex" searchQuery={searchQuery} industry={tpexIndustry} showEtf={false} etfOnly={false} />
+          <SkillDashboard market="tpex" searchQuery={searchQuery} industry={tpexIndustry} showEtf={false} etfOnly={false} concept={tpexConcept} />
         )}
       </div>
     </div>
