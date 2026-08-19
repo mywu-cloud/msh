@@ -114,21 +114,17 @@ async function getListedCodesSet(env: Env): Promise<Set<string>> {
       } catch (_e) { /* fall through and refetch */ }
     }
   }
-  const codes = new Set<string>(); const fetchIsinMode = async (mode: number): Promise<string[]> => { const out: string[] = []; try { const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 6000); const res = await fetch(`https://isin.twse.com.tw/isin/C_public.jsp?strMode=${mode}`, { signal: ctrl.signal }); clearTimeout(timer); if (!res.ok) return out; const buf = await res.arrayBuffer(); const html = new TextDecoder("big5").decode(buf); const re = /<td bgcolor=#(?:FAFAD2|D5FFD5)>(\d{4,6}[A-Za-z]{0,2})\u3000/g; let m: RegExpExecArray | null; while ((m = re.exec(html)) !== null) out.push(m[1]); } catch (e) { console.error("getListedCodesSet fetch error:", e); } return out; }; const modeResults = await Promise.all([2, 4].map(fetchIsinMode)); for (const arr of modeResults) for (const c of arr) codes.add(c);
-  for (const mode of [] as number[]) {
-    try {
-      const res = await fetch(`https://isin.twse.com.tw/isin/C_public.jsp?strMode=${mode}`);
-      if (!res.ok) continue;
-      const buf = await res.arrayBuffer();
-      const html = new TextDecoder("big5").decode(buf);
-      const re = /<td bgcolor=#(?:FAFAD2|D5FFD5)>(\d{4,6}[A-Za-z]{0,2})\u3000/g;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(html)) !== null) codes.add(m[1]);
-    } catch (e) {
-      console.error("getListedCodesSet fetch error:", e);
-    }
+  const fetchIsinMode = async (mode: number): Promise<string[]> => { const out: string[] = []; try { const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 15000); const res = await fetch(`https://isin.twse.com.tw/isin/C_public.jsp?strMode=${mode}`, { signal: ctrl.signal }); clearTimeout(timer); if (!res.ok) return out; const buf = await res.arrayBuffer(); const html = new TextDecoder("big5").decode(buf); const re = /<td bgcolor=#(?:FAFAD2|D5FFD5)>(\d{4,6}[A-Za-z]{0,2})　/g; let m: RegExpExecArray | null; while ((m = re.exec(html)) !== null) out.push(m[1]); } catch (e) { console.error(`getListedCodesSet fetch error (mode=${mode}):`, e); } return out; };
+  const [twseCodes, tpexCodes] = await Promise.all([2, 4].map(fetchIsinMode));
+  // 上市／上櫃任一邊筆數異常偏低（正常上市約1000+檔、上櫃約800+檔），視為該次抓取失敗（例如 timeout），
+  // 不要覆蓋快取，避免半殘清單把整個市場的股票濾空（曾經發生：上市 fetch timeout 導致 twse 股票全部消失）。
+  const MIN_SANE_COUNT = 500;
+  const bothOk = twseCodes.length >= MIN_SANE_COUNT && tpexCodes.length >= MIN_SANE_COUNT;
+  if (!bothOk) {
+    console.error(`getListedCodesSet: suspicious counts twse=${twseCodes.length} tpex=${tpexCodes.length}, skip cache write this round`);
   }
-  if (codes.size > 0 && env.CACHE) {
+  const codes = new Set<string>([...twseCodes, ...tpexCodes]);
+  if (bothOk && codes.size > 0 && env.CACHE) {
     await env.CACHE.put(cacheKey, JSON.stringify([...codes]), { expirationTtl: 86400 });
   }
   return codes;
