@@ -469,6 +469,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">持有%</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">評分</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs hidden md:table-cell">{priceDate ? priceDate + ' 收盤' : '收盤'}</th>
+              <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs hidden md:table-cell">漲跌</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs hidden md:table-cell">漲跌%</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium text-xs">信號</th>
             </tr>
@@ -501,6 +502,9 @@ function ScreenerWithSave({ market }: { market: Market }) {
                     )}
                   </td>
                   <td className="text-center px-2 py-2 text-xs hidden md:table-cell">{rowPrice?.close ? rowPrice.close.toFixed(2) : '—'}</td>
+                  <td className={clsx('text-center px-2 py-2 text-xs hidden md:table-cell', rowPrice && rowPrice.change > 0 ? 'text-red-600' : rowPrice && rowPrice.change < 0 ? 'text-green-600' : 'text-slate-400')}>
+                    {rowPrice?.change != null ? (rowPrice.change > 0 ? '+' : '') + rowPrice.change.toFixed(2) : '—'}
+                  </td>
                   <td className={clsx('text-center px-2 py-2 text-xs hidden md:table-cell', rowPrice && rowPrice.change_pct > 0 ? 'text-red-600' : rowPrice && rowPrice.change_pct < 0 ? 'text-green-600' : 'text-slate-400')}>
                     {rowPrice?.change_pct != null ? (rowPrice.change_pct > 0 ? '+' : '') + rowPrice.change_pct.toFixed(2) + '%' : '—'}
                   </td>
@@ -585,7 +589,7 @@ function WeeklyChangesPanel({ market }: { market: Market }) {
 // ─── 12週籌碼熱力圖 Panel ─────────────────────────────────────────────────────
 function HeatmapPanel({ market }: { market: Market }) {
   const { data, isLoading } = useSWR<BHResponse>(
-    `${API_BASE}/api/big-holder-changes?market=${market}&limit=50&sort=total_change&weeks=12`,
+    `${API_BASE}/api/big-holder-changes?market=${market}&limit=50&sort=total_change&weeks=12&include_price=1`,
     fetcher, { revalidateOnFocus: false }
   )
   if (isLoading) return <div className="flex items-center justify-center py-8 text-slate-400 text-sm"><span className="animate-spin mr-2">⟳</span>計算熱力圖...</div>
@@ -633,6 +637,8 @@ function HeatmapPanel({ market }: { market: Market }) {
             <th className="text-left px-2 py-1.5 text-slate-500 font-medium sticky left-0 bg-white min-w-[100px]">股票</th>
             {weekDates.map(d => <th key={d} className="text-center px-1 py-1.5 text-slate-400 font-medium min-w-[42px]">{formatDate(d)}</th>)}
             <th className="text-center px-2 py-1.5 text-slate-500 font-medium">累計</th>
+            <th className="text-center px-2 py-1.5 text-slate-500 font-medium">收盤</th>
+            <th className="text-center px-2 py-1.5 text-slate-500 font-medium">漲跌%</th>
           </tr>
         </thead>
         <tbody>
@@ -652,6 +658,10 @@ function HeatmapPanel({ market }: { market: Market }) {
               })}
               <td className={`text-center px-2 py-1 font-bold ${row.total_change > 0 ? 'text-red-600' : 'text-green-600'}`}>
                 {row.total_change > 0 ? '+' : ''}{row.total_change.toFixed(2)}
+              </td>
+              <td className="text-center px-2 py-1 text-slate-700">{row.price?.close ? row.price.close.toFixed(2) : '—'}</td>
+              <td className={`text-center px-2 py-1 ${row.price && row.price.change_pct > 0 ? 'text-red-600' : row.price && row.price.change_pct < 0 ? 'text-green-600' : 'text-slate-400'}`}>
+                {row.price?.change_pct != null ? (row.price.change_pct > 0 ? '+' : '') + row.price.change_pct.toFixed(2) + '%' : '—'}
               </td>
             </tr>
           ))}
