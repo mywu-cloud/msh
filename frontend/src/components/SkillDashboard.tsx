@@ -42,6 +42,7 @@ interface Props {
   market: 'twse' | 'tpex'
   searchQuery: string
   industry?: string
+  concept?: string
   showEtf?: boolean
   etfOnly?: boolean
 }
@@ -200,7 +201,7 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
   )
 }
 
-export function SkillDashboard({ market, searchQuery, industry = '', showEtf = true, etfOnly = false }: Props) {
+export function SkillDashboard({ market, searchQuery, industry = '', concept = '', showEtf = true, etfOnly = false }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('total_change')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
 
@@ -217,6 +218,13 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
   )
   const priceMap = pricesData?.data || {}
   const priceDate = pricesData?.trade_date ? (pricesData.trade_date.slice(4,6) + '/' + pricesData.trade_date.slice(6,8)) : ''
+
+  const { data: conceptsData } = useSWR<{ concepts: string[]; map: Record<string, string[]> }>(
+    `${API_BASE}/api/concepts?market=${market}`,
+    fetcher,
+    { revalidateOnFocus: false }
+  )
+  const conceptMap = conceptsData?.map || {}
 
   function handleSort(col: SortKey) {
     if (sortKey === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
@@ -254,6 +262,7 @@ export function SkillDashboard({ market, searchQuery, industry = '', showEtf = t
       if (!r.stock_code.includes(q) && !(r.stock_name || '').includes(q) && !(r.industry || '').toLowerCase().includes(q)) return false
     }
     if (industry && (r.industry || '') !== industry) return false
+    if (concept && !(conceptMap[r.stock_code] || []).includes(concept)) return false
     return true
   })
 

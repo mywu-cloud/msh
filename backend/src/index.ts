@@ -104,34 +104,62 @@ async function fetchTpexPrices(codes?: string[]): Promise<Map<string, PriceInfo>
 // Source: TWSE ISIN lookup (covers both TWSE strMode=2 and TPEx strMode=4).
 // Cached in KV for 24h; fails open (returns empty set) so a fetch failure never
 // wipes out the whole list.
-async function getListedCodesSet(env: Env): Promise<Set<string>> {
-  const cacheKey = "listedcodes:v1";
-  if (env.CACHE) {
-    const cached = await env.CACHE.get(cacheKey);
-    if (cached) {
-      try {
-        return new Set(JSON.parse(cached) as string[]);
-      } catch (_e) { /* fall through and refetch */ }
-    }
-  }
-  const codes = new Set<string>(); const fetchIsinMode = async (mode: number): Promise<string[]> => { const out: string[] = []; try { const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 6000); const res = await fetch(`https://isin.twse.com.tw/isin/C_public.jsp?strMode=${mode}`, { signal: ctrl.signal }); clearTimeout(timer); if (!res.ok) return out; const buf = await res.arrayBuffer(); const html = new TextDecoder("big5").decode(buf); const re = /<td bgcolor=#(?:FAFAD2|D5FFD5)>(\d{4,6}[A-Za-z]{0,2})\u3000/g; let m: RegExpExecArray | null; while ((m = re.exec(html)) !== null) out.push(m[1]); } catch (e) { console.error("getListedCodesSet fetch error:", e); } return out; }; const modeResults = await Promise.all([2, 4].map(fetchIsinMode)); for (const arr of modeResults) for (const c of arr) codes.add(c);
-  for (const mode of [] as number[]) {
+// Per-market listed-code sets. null for a side means "we have no trustworthy
+// list for this market right now" — callers must treat that as fail-open
+// (don't filter that market) rather than treating an empty/partial live
+// fetch as if it were an authoritative "nothing is listed" answer.
+interface ListedCodesResult { twse: Set<string> | null; tpex: Set<string> | null }
+
+async function getListedCodesSet(env: Env): Promise<ListedCodesResult> {
+  const MIN_SANE_COUNT = 500; // 正常上市約1000+檔、上櫃約800+檔，過低視為該次抓取失敗（例如 timeout）
+  const CACHE_KEYS = { twse: "listedcodes:twse:v2", tpex: "listedcodes:tpex:v2" } as const;
+
+  const fetchIsinMode = async (mode: number): Promise<string[]> => {
+    const out: string[] = [];
     try {
-      const res = await fetch(`https://isin.twse.com.tw/isin/C_public.jsp?strMode=${mode}`);
-      if (!res.ok) continue;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      const res = await fetch(`https://isin.twse.com.tw/isin/C_public.jsp?strMode=${mode}`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) return out;
       const buf = await res.arrayBuffer();
       const html = new TextDecoder("big5").decode(buf);
-      const re = /<td bgcolor=#(?:FAFAD2|D5FFD5)>(\d{4,6}[A-Za-z]{0,2})\u3000/g;
+      const re = /<td bgcolor=#(?:FAFAD2|D5FFD5)>(\d{4,6}[A-Za-z]{0,2})　/g;
       let m: RegExpExecArray | null;
-      while ((m = re.exec(html)) !== null) codes.add(m[1]);
+      while ((m = re.exec(html)) !== null) out.push(m[1]);
     } catch (e) {
-      console.error("getListedCodesSet fetch error:", e);
+      console.error(`getListedCodesSet fetch error (mode=${mode}):`, e);
     }
-  }
-  if (codes.size > 0 && env.CACHE) {
-    await env.CACHE.put(cacheKey, JSON.stringify([...codes]), { expirationTtl: 86400 });
-  }
-  return codes;
+    return out;
+  };
+
+  // Each market side is resolved independently: a bad/slow fetch for one
+  // side (e.g. TWSE ISIN endpoint timing out) must never affect the other
+  // side, and must never wipe out that side's own last-known-good cache.
+  const resolveSide = async (mode: number, market: "twse" | "tpex"): Promise<Set<string> | null> => {
+    const liveCodes = await fetchIsinMode(mode);
+    const cacheKey = CACHE_KEYS[market];
+    if (liveCodes.length >= MIN_SANE_COUNT) {
+      if (env.CACHE) await env.CACHE.put(cacheKey, JSON.stringify(liveCodes), { expirationTtl: 86400 });
+      return new Set(liveCodes);
+    }
+    console.error(`getListedCodesSet: suspicious count for ${market}=${liveCodes.length}, falling back to cache`);
+    if (env.CACHE) {
+      const cached = await env.CACHE.get(cacheKey);
+      if (cached) {
+        try { return new Set(JSON.parse(cached) as string[]); } catch (_e) { /* fall through */ }
+      }
+    }
+    // No live data and no cached fallback: signal "unknown" so this market
+    // isn't filtered at all, instead of silently filtering every stock out.
+    return null;
+  };
+
+  const [twse, tpex] = await Promise.all([
+    resolveSide(2, "twse"),
+    resolveSide(4, "tpex"),
+  ]);
+  return { twse, tpex };
 }
 
 // ─── FinMind Technical Indicators (Daily Volume / KD / MACD) ───────────────
@@ -334,7 +362,18 @@ const datesResult = await env.DB.prepare(`SELECT DISTINCT date FROM holder_distr
     }
 
     timings.aggregate = Date.now() - t0; const listedCodes = await getListedCodesSet(env); timings.listedCodes = Date.now() - t0;
-    const filteredResult = listedCodes.size > 0 ? result.filter(r => listedCodes.has(r.stock_code)) : result;
+    // Filter each row against ITS OWN market's listed-code set, never a
+    // combined one — otherwise a fetch failure on one market's ISIN list
+    // (e.g. TWSE endpoint timing out) silently zeroes out every stock in
+    // that market while the other market keeps working. When a row's
+    // market can't be determined, or that market's set is unavailable
+    // (fetch + cache both failed), fail open and keep the row rather than
+    // dropping it based on incomplete information.
+    const filteredResult = result.filter(r => {
+      const codeSet = r.market === "twse" ? listedCodes.twse : r.market === "tpex" ? listedCodes.tpex : null;
+      if (!codeSet) return true;
+      return codeSet.has(r.stock_code);
+    });
 
     if (sort === "latest_change") filteredResult.sort((a, b) => b.latest_change - a.latest_change);
     else filteredResult.sort((a, b) => b.total_change - a.total_change);
@@ -392,6 +431,76 @@ async function handleIndustries(request: Request, env: Env): Promise<Response> {
     const responseText = JSON.stringify({ market, industries });
     if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 86400 });
     return new Response(responseText, { headers: CORS_HEADERS });
+  } catch (err) { return errorResponse("Query failed", 500); }
+}
+
+// ─── handleConcepts (概念股) ───────────────────────────────────────────────────
+async function handleConcepts(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const market = url.searchParams.get("market") || "";
+  const cacheKey = `concepts:v1:${market}`;
+  const cached = env.CACHE ? await env.CACHE.get(cacheKey) : null;
+  if (cached) return new Response(cached, { headers: { ...CORS_HEADERS, "X-Cache": "HIT" } });
+  try {
+    let sql: string;
+    const params: string[] = [];
+    if (market === "twse" || market === "tpex") {
+      sql = `SELECT sc.stock_code, sc.concept FROM stock_concepts sc JOIN stock_info si ON sc.stock_code = si.stock_code WHERE si.market = ? ORDER BY sc.concept ASC`;
+      params.push(market);
+    } else {
+      sql = `SELECT stock_code, concept FROM stock_concepts ORDER BY concept ASC`;
+    }
+    const result = await env.DB.prepare(sql).bind(...params).all();
+    const rows = (result.results || []) as unknown as { stock_code: string; concept: string }[];
+    const concepts = Array.from(new Set(rows.map(r => r.concept))).sort();
+    const map: Record<string, string[]> = {};
+    for (const r of rows) {
+      if (!map[r.stock_code]) map[r.stock_code] = [];
+      map[r.stock_code].push(r.concept);
+    }
+    const responseText = JSON.stringify({ market, concepts, map });
+    if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 3600 });
+    return new Response(responseText, { headers: CORS_HEADERS });
+  } catch (err) { return errorResponse("Query failed", 500); }
+}
+
+// ─── handleAdminConceptsUpsert (POST) ─────────────────────────────────────────
+// Body: { stock_code: string, concepts: string[] } -- replaces all concept tags for that stock
+async function handleAdminConceptsUpsert(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") return errorResponse("Method Not Allowed", 405);
+  try {
+    const body = await request.json() as { stock_code: string; concepts: string[] };
+    if (!body.stock_code || !Array.isArray(body.concepts)) return errorResponse("stock_code and concepts[] required");
+    const code = body.stock_code.trim().toUpperCase();
+    if (!/^[0-9A-Z]{3,8}$/.test(code)) return errorResponse("Invalid stock code");
+    const concepts = body.concepts.map(c => String(c).trim()).filter(Boolean).slice(0, 20);
+    await env.DB.prepare("DELETE FROM stock_concepts WHERE stock_code = ?").bind(code).run();
+    if (concepts.length) {
+      const stmts = concepts.map(c => env.DB.prepare("INSERT OR REPLACE INTO stock_concepts (stock_code, concept) VALUES (?,?)").bind(code, c));
+      await env.DB.batch(stmts);
+    }
+    if (env.CACHE) {
+      const keys = await env.CACHE.list({ prefix: "concepts:v1:" });
+      for (const k of keys.keys) await env.CACHE.delete(k.name);
+    }
+    return jsonResponse({ success: true, stock_code: code, concepts });
+  } catch (err) {
+    console.error("handleAdminConceptsUpsert error:", err);
+    return errorResponse("Upsert failed: " + String(err), 500);
+  }
+}
+
+// ─── handleAdminConceptsList (GET) ────────────────────────────────────────────
+async function handleAdminConceptsList(env: Env): Promise<Response> {
+  try {
+    const result = await env.DB.prepare("SELECT stock_code, concept FROM stock_concepts ORDER BY stock_code ASC, concept ASC").all();
+    const rows = (result.results || []) as unknown as { stock_code: string; concept: string }[];
+    const map: Record<string, string[]> = {};
+    for (const r of rows) {
+      if (!map[r.stock_code]) map[r.stock_code] = [];
+      map[r.stock_code].push(r.concept);
+    }
+    return jsonResponse({ count: Object.keys(map).length, data: map });
   } catch (err) { return errorResponse("Query failed", 500); }
 }
 
@@ -1324,6 +1433,9 @@ export default {
     if (path === "/api/stats" || path === "/api/stats/") return handleStats(env);
     if (path === "/api/upload-csv" || path === "/api/upload-csv/") return handleUploadCsv(request, env);
     if (path === "/api/industries" || path === "/api/industries/") return handleIndustries(request, env);
+    if (path === "/api/concepts" || path === "/api/concepts/") return handleConcepts(request, env);
+    if (path === "/api/admin/concepts" && request.method === "POST") return handleAdminConceptsUpsert(request, env);
+    if (path === "/api/admin/concepts" && request.method === "GET") return handleAdminConceptsList(env);
     if (path === "/api/screener-snapshot" || path === "/api/screener-snapshot/") return handleScreenerSnapshot(request, env);
     if (path === "/api/screener-history" || path === "/api/screener-history/") return handleScreenerHistory(request, env);
     const distMatch = path.match(/^\/api\/distribution\/([A-Z0-9]+)$/i);
@@ -1348,6 +1460,9 @@ export default {
           "GET /api/stats",
           "GET /api/technical/:stockCode (daily volume + KD + MACD, requires FINMIND_TOKEN)",
           "GET /api/industries?market=twse|tpex",
+      "GET /api/concepts?market=twse|tpex (概念股標籤與 stock_code 對應清單)",
+      "POST /api/admin/concepts {stock_code, concepts:[]} (覆寫該股票的概念標籤)",
+      "GET /api/admin/concepts (列出全部概念股標籤)",
           "POST /api/upload-csv (multipart/form-data: file, date?)",
           "POST /api/screener-snapshot {snapshot_date, market, stocks:[]}",
           "GET /api/screener-history?market=all&date=&stock_code=&limit=100",

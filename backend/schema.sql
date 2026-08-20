@@ -73,3 +73,12 @@ SELECT * FROM latest_skill_analysis
 WHERE CAST(stock_code AS INTEGER) >= 4000
 ORDER BY skill_score DESC
 LIMIT 20;
+
+-- ─── Stock Concepts (概念股標籤，AI 供應鏈相關) ────────────────────────────────
+CREATE TABLE IF NOT EXISTS stock_concepts (
+      stock_code  TEXT NOT NULL,
+      concept     TEXT NOT NULL,
+      PRIMARY KEY (stock_code, concept)
+  );
+
+CREATE INDEX IF NOT EXISTS idx_stock_concepts_concept ON stock_concepts(concept);
