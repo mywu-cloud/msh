@@ -592,6 +592,12 @@ function HeatmapPanel({ market }: { market: Market }) {
     `${API_BASE}/api/big-holder-changes?market=${market}&limit=50&sort=total_change&weeks=12&include_price=1`,
     fetcher, { revalidateOnFocus: false }
   )
+  const { data: pricesData } = useSWR<{ trade_date: string; data: Record<string, { close: number; change: number; change_pct: number }> }>(
+    `${API_BASE}/api/prices`,
+    fetcher,
+    { revalidateOnFocus: false, refreshInterval: 3600000 }
+  )
+  const priceDate = pricesData?.trade_date ? (pricesData.trade_date.slice(4,6) + '/' + pricesData.trade_date.slice(6,8)) : ''
   if (isLoading) return <div className="flex items-center justify-center py-8 text-slate-400 text-sm"><span className="animate-spin mr-2">⟳</span>計算熱力圖...</div>
   let rows: BHRow[] = (data?.data || [])
   rows = rows.filter(r => shouldInclude(r)).slice(0, 30)
@@ -637,7 +643,7 @@ function HeatmapPanel({ market }: { market: Market }) {
             <th className="text-left px-2 py-1.5 text-slate-500 font-medium sticky left-0 bg-white min-w-[100px]">股票</th>
             {weekDates.map(d => <th key={d} className="text-center px-1 py-1.5 text-slate-400 font-medium min-w-[42px]">{formatDate(d)}</th>)}
             <th className="text-center px-2 py-1.5 text-slate-500 font-medium">累計</th>
-            <th className="text-center px-2 py-1.5 text-slate-500 font-medium">收盤</th>
+            <th className="text-center px-2 py-1.5 text-slate-500 font-medium">{priceDate ? priceDate + ' 收盤' : '收盤'}</th>
             <th className="text-center px-2 py-1.5 text-slate-500 font-medium">漲跌%</th>
           </tr>
         </thead>
