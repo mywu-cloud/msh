@@ -104,30 +104,62 @@ async function fetchTpexPrices(codes?: string[]): Promise<Map<string, PriceInfo>
 // Source: TWSE ISIN lookup (covers both TWSE strMode=2 and TPEx strMode=4).
 // Cached in KV for 24h; fails open (returns empty set) so a fetch failure never
 // wipes out the whole list.
-async function getListedCodesSet(env: Env): Promise<Set<string>> {
-  const cacheKey = "listedcodes:v1";
-  if (env.CACHE) {
-    const cached = await env.CACHE.get(cacheKey);
-    if (cached) {
-      try {
-        return new Set(JSON.parse(cached) as string[]);
-      } catch (_e) { /* fall through and refetch */ }
+// Per-market listed-code sets. null for a side means "we have no trustworthy
+// list for this market right now" — callers must treat that as fail-open
+// (don't filter that market) rather than treating an empty/partial live
+// fetch as if it were an authoritative "nothing is listed" answer.
+interface ListedCodesResult { twse: Set<string> | null; tpex: Set<string> | null }
+
+async function getListedCodesSet(env: Env): Promise<ListedCodesResult> {
+  const MIN_SANE_COUNT = 500; // 正常上市約1000+檔、上櫃約800+檔，過低視為該次抓取失敗（例如 timeout）
+  const CACHE_KEYS = { twse: "listedcodes:twse:v2", tpex: "listedcodes:tpex:v2" } as const;
+
+  const fetchIsinMode = async (mode: number): Promise<string[]> => {
+    const out: string[] = [];
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      const res = await fetch(`https://isin.twse.com.tw/isin/C_public.jsp?strMode=${mode}`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) return out;
+      const buf = await res.arrayBuffer();
+      const html = new TextDecoder("big5").decode(buf);
+      const re = /<td bgcolor=#(?:FAFAD2|D5FFD5)>(\d{4,6}[A-Za-z]{0,2})　/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(html)) !== null) out.push(m[1]);
+    } catch (e) {
+      console.error(`getListedCodesSet fetch error (mode=${mode}):`, e);
     }
-  }
-  const fetchIsinMode = async (mode: number): Promise<string[]> => { const out: string[] = []; try { const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 15000); const res = await fetch(`https://isin.twse.com.tw/isin/C_public.jsp?strMode=${mode}`, { signal: ctrl.signal }); clearTimeout(timer); if (!res.ok) return out; const buf = await res.arrayBuffer(); const html = new TextDecoder("big5").decode(buf); const re = /<td bgcolor=#(?:FAFAD2|D5FFD5)>(\d{4,6}[A-Za-z]{0,2})　/g; let m: RegExpExecArray | null; while ((m = re.exec(html)) !== null) out.push(m[1]); } catch (e) { console.error(`getListedCodesSet fetch error (mode=${mode}):`, e); } return out; };
-  const [twseCodes, tpexCodes] = await Promise.all([2, 4].map(fetchIsinMode));
-  // 上市／上櫃任一邊筆數異常偏低（正常上市約1000+檔、上櫃約800+檔），視為該次抓取失敗（例如 timeout），
-  // 不要覆蓋快取，避免半殘清單把整個市場的股票濾空（曾經發生：上市 fetch timeout 導致 twse 股票全部消失）。
-  const MIN_SANE_COUNT = 500;
-  const bothOk = twseCodes.length >= MIN_SANE_COUNT && tpexCodes.length >= MIN_SANE_COUNT;
-  if (!bothOk) {
-    console.error(`getListedCodesSet: suspicious counts twse=${twseCodes.length} tpex=${tpexCodes.length}, skip cache write this round`);
-  }
-  const codes = new Set<string>([...twseCodes, ...tpexCodes]);
-  if (bothOk && codes.size > 0 && env.CACHE) {
-    await env.CACHE.put(cacheKey, JSON.stringify([...codes]), { expirationTtl: 86400 });
-  }
-  return codes;
+    return out;
+  };
+
+  // Each market side is resolved independently: a bad/slow fetch for one
+  // side (e.g. TWSE ISIN endpoint timing out) must never affect the other
+  // side, and must never wipe out that side's own last-known-good cache.
+  const resolveSide = async (mode: number, market: "twse" | "tpex"): Promise<Set<string> | null> => {
+    const liveCodes = await fetchIsinMode(mode);
+    const cacheKey = CACHE_KEYS[market];
+    if (liveCodes.length >= MIN_SANE_COUNT) {
+      if (env.CACHE) await env.CACHE.put(cacheKey, JSON.stringify(liveCodes), { expirationTtl: 86400 });
+      return new Set(liveCodes);
+    }
+    console.error(`getListedCodesSet: suspicious count for ${market}=${liveCodes.length}, falling back to cache`);
+    if (env.CACHE) {
+      const cached = await env.CACHE.get(cacheKey);
+      if (cached) {
+        try { return new Set(JSON.parse(cached) as string[]); } catch (_e) { /* fall through */ }
+      }
+    }
+    // No live data and no cached fallback: signal "unknown" so this market
+    // isn't filtered at all, instead of silently filtering every stock out.
+    return null;
+  };
+
+  const [twse, tpex] = await Promise.all([
+    resolveSide(2, "twse"),
+    resolveSide(4, "tpex"),
+  ]);
+  return { twse, tpex };
 }
 
 // ─── FinMind Technical Indicators (Daily Volume / KD / MACD) ───────────────
@@ -330,7 +362,18 @@ const datesResult = await env.DB.prepare(`SELECT DISTINCT date FROM holder_distr
     }
 
     timings.aggregate = Date.now() - t0; const listedCodes = await getListedCodesSet(env); timings.listedCodes = Date.now() - t0;
-    const filteredResult = listedCodes.size > 0 ? result.filter(r => listedCodes.has(r.stock_code)) : result;
+    // Filter each row against ITS OWN market's listed-code set, never a
+    // combined one — otherwise a fetch failure on one market's ISIN list
+    // (e.g. TWSE endpoint timing out) silently zeroes out every stock in
+    // that market while the other market keeps working. When a row's
+    // market can't be determined, or that market's set is unavailable
+    // (fetch + cache both failed), fail open and keep the row rather than
+    // dropping it based on incomplete information.
+    const filteredResult = result.filter(r => {
+      const codeSet = r.market === "twse" ? listedCodes.twse : r.market === "tpex" ? listedCodes.tpex : null;
+      if (!codeSet) return true;
+      return codeSet.has(r.stock_code);
+    });
 
     if (sort === "latest_change") filteredResult.sort((a, b) => b.latest_change - a.latest_change);
     else filteredResult.sort((a, b) => b.total_change - a.total_change);
