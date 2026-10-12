@@ -14,8 +14,34 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Expose-Headers": "X-Cache",
   "Content-Type": "application/json; charset=utf-8",
 };
+
+// ─── Cache TTLs ──────────────────────────────────────────────────────────────
+// 股權分散表每週更新一次、股價每日收盤後更新一次；兩者寫入時都會主動清除快取
+// （invalidateHolderCaches / prices:latest），排程再預熱，所以 TTL 可以放長。
+const HOLDER_CACHE_TTL = 7 * 86400;   // big-holder-changes / top-changes
+const PRICES_CACHE_TTL = 12 * 3600;   // /api/prices
+const LISTED_CODES_TTL = 7 * 86400;   // ISIN 上市/上櫃代碼表
+
+// 清除所有依賴股權分散表或股價的彙總快取（新資料寫入後呼叫）
+async function invalidateHolderCaches(env: Env): Promise<number> {
+  if (!env.CACHE) return 0;
+  let n = 0;
+  for (const prefix of ["bigholderchanges:v3:", "topchanges:v3:"]) {
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await env.CACHE.list({ prefix, cursor });
+      await Promise.all(page.keys.map(k => env.CACHE!.delete(k.name)));
+      n += page.keys.length;
+      if (page.list_complete) break;
+      cursor = (page as { cursor?: string }).cursor;
+      if (!cursor) break;
+    }
+  }
+  return n;
+}
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
@@ -65,38 +91,33 @@ async function fetchTwsePrices(): Promise<Map<string, PriceInfo>> {
   return result;
 }
 
+// 上櫃收盤價：櫃買中心 OpenAPI 一次取得全部上櫃股（取代逐檔 Yahoo 請求，
+// 原作法 500 檔 × 1 請求會超過 Workers 子請求上限而全數失敗）。
+// codes 有給時只回傳指定代碼；不給則回傳全部。
 async function fetchTpexPrices(codes?: string[]): Promise<Map<string, PriceInfo>> {
   const result = new Map<string, PriceInfo>();
-  if (!codes || codes.length === 0) return result;
+  const want = codes && codes.length ? new Set(codes) : null;
   try {
-    // Yahoo Finance v8 single-stock API works from CF Workers; fetch in parallel batches
-    const PARALLEL = 10; // max concurrent requests
-    for (let i = 0; i < codes.length; i += PARALLEL) {
-      const batch = codes.slice(i, i + PARALLEL);
-      const promises = batch.map(async (code) => {
-        try {
-          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}.TWO?interval=1d&range=5d`;
-          const res = await fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MSH-API/2.0)' },
-            cf: { cacheTtl: 60, cacheEverything: true },
-          });
-          if (!res.ok) return;
-          const data = await res.json() as { chart?: { result?: Array<{ meta?: { regularMarketPrice?: number; regularMarketChange?: number; regularMarketChangePercent?: number; previousClose?: number; chartPreviousClose?: number } }> } };
-          const meta = data.chart?.result?.[0]?.meta;
-          if (!meta) return;
-          const close = meta.regularMarketPrice || 0;
-          const prevClose = meta.previousClose || meta.chartPreviousClose || 0;
-          const rawChange = prevClose > 0 ? (close - prevClose) : (meta.regularMarketChange || 0);
-          const change = Math.round(rawChange * 100) / 100;
-          const rawPct = prevClose > 0 ? (rawChange / prevClose * 100) : (meta.regularMarketChangePercent || 0);
-          const change_pct = Math.round(rawPct * 100) / 100;
-          if (close > 0) result.set(code, { close, change, change_pct });
-        } catch (_e) { /* skip failed code */ }
-      });
-      await Promise.all(promises);
+    const res = await fetch(TPEX_PRICE_API, {
+      headers: { "User-Agent": "MSH-API/2.0", "Cache-Control": "no-cache" },
+      cf: { cacheTtl: 0, cacheEverything: false },
+    });
+    if (!res.ok) return result;
+    const data = await res.json() as Array<{ SecuritiesCompanyCode?: string; Close?: string; Change?: string }>;
+    if (!Array.isArray(data)) return result;
+    for (const row of data) {
+      const code = (row.SecuritiesCompanyCode || "").trim();
+      if (!code || (want && !want.has(code))) continue;
+      const close = parseFloat((row.Close || "").replace(/,/g, ""));
+      if (!(close > 0)) continue; // "---" 等無成交
+      let change = parseFloat((row.Change || "0").replace(/[+,\s]/g, ""));
+      if (!Number.isFinite(change)) change = 0;
+      const prev = close - change;
+      const change_pct = prev > 0 ? Math.round((change / prev) * 10000) / 100 : 0;
+      result.set(code, { close, change: Math.round(change * 100) / 100, change_pct });
     }
   } catch (e) {
-    console.error('fetchTpexPrices error:', e);
+    console.error("fetchTpexPrices error:", e);
   }
   return result;
 }
@@ -110,17 +131,30 @@ async function fetchTpexPrices(codes?: string[]): Promise<Map<string, PriceInfo>
 // fetch as if it were an authoritative "nothing is listed" answer.
 interface ListedCodesResult { twse: Set<string> | null; tpex: Set<string> | null }
 
-async function getListedCodesSet(env: Env): Promise<ListedCodesResult> {
+// 同一個 isolate 內的記憶體快取，避免每個請求都讀 KV
+let listedCodesMemo: { until: number; value: ListedCodesResult } | null = null;
+const LISTED_CODES_MEMO_MS = 3600 * 1000;      // 兩邊都有資料：記 1 小時
+const LISTED_CODES_FAIL_MEMO_MS = 10 * 60 * 1000; // 有一邊抓不到：10 分鐘內不再重試，避免每個請求都卡在 ISIN
+
+// 讀取順序：記憶體 → KV → 即時抓 ISIN（僅在 KV 沒有時）。
+// refresh=true（每日排程用）時強制即時抓並更新 KV；抓取結果異常時保留舊快取。
+async function getListedCodesSet(env: Env, opts: { refresh?: boolean } = {}): Promise<ListedCodesResult> {
   const MIN_SANE_COUNT = 500; // 正常上市約1000+檔、上櫃約800+檔，過低視為該次抓取失敗（例如 timeout）
   const CACHE_KEYS = { twse: "listedcodes:twse:v2", tpex: "listedcodes:tpex:v2" } as const;
+  const refresh = !!opts.refresh;
+
+  if (!refresh && listedCodesMemo && Date.now() < listedCodesMemo.until) {
+    return listedCodesMemo.value;
+  }
 
   const fetchIsinMode = async (mode: number): Promise<string[]> => {
     const out: string[] = [];
+    // 逾時涵蓋「連線 + 下載內容」；isin.twse.com.tw 內容數 MB 且常很慢，
+    // 原本只在拿到標頭前計時，下載本體可拖到數分鐘。
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), refresh ? 60000 : 20000);
     try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 15000);
       const res = await fetch(`https://isin.twse.com.tw/isin/C_public.jsp?strMode=${mode}`, { signal: ctrl.signal });
-      clearTimeout(timer);
       if (!res.ok) return out;
       const buf = await res.arrayBuffer();
       const html = new TextDecoder("big5").decode(buf);
@@ -129,37 +163,42 @@ async function getListedCodesSet(env: Env): Promise<ListedCodesResult> {
       while ((m = re.exec(html)) !== null) out.push(m[1]);
     } catch (e) {
       console.error(`getListedCodesSet fetch error (mode=${mode}):`, e);
+    } finally {
+      clearTimeout(timer);
     }
     return out;
   };
 
-  // Each market side is resolved independently: a bad/slow fetch for one
-  // side (e.g. TWSE ISIN endpoint timing out) must never affect the other
-  // side, and must never wipe out that side's own last-known-good cache.
+  const readCache = async (market: "twse" | "tpex"): Promise<Set<string> | null> => {
+    if (!env.CACHE) return null;
+    const cached = await env.CACHE.get(CACHE_KEYS[market]);
+    if (!cached) return null;
+    try { return new Set(JSON.parse(cached) as string[]); } catch (_e) { return null; }
+  };
+
+  // 各市場獨立處理：某一邊抓取失敗不影響另一邊，也不會覆蓋該邊既有的快取。
   const resolveSide = async (mode: number, market: "twse" | "tpex"): Promise<Set<string> | null> => {
+    if (!refresh) {
+      const cached = await readCache(market);
+      if (cached) return cached;
+    }
     const liveCodes = await fetchIsinMode(mode);
-    const cacheKey = CACHE_KEYS[market];
     if (liveCodes.length >= MIN_SANE_COUNT) {
-      if (env.CACHE) await env.CACHE.put(cacheKey, JSON.stringify(liveCodes), { expirationTtl: 86400 });
+      if (env.CACHE) await env.CACHE.put(CACHE_KEYS[market], JSON.stringify(liveCodes), { expirationTtl: LISTED_CODES_TTL });
       return new Set(liveCodes);
     }
     console.error(`getListedCodesSet: suspicious count for ${market}=${liveCodes.length}, falling back to cache`);
-    if (env.CACHE) {
-      const cached = await env.CACHE.get(cacheKey);
-      if (cached) {
-        try { return new Set(JSON.parse(cached) as string[]); } catch (_e) { /* fall through */ }
-      }
-    }
-    // No live data and no cached fallback: signal "unknown" so this market
-    // isn't filtered at all, instead of silently filtering every stock out.
-    return null;
+    // 沒有可信資料：回傳 null 代表此市場不過濾（fail open），而不是把整個市場濾掉。
+    return refresh ? await readCache(market) : null;
   };
 
   const [twse, tpex] = await Promise.all([
     resolveSide(2, "twse"),
     resolveSide(4, "tpex"),
   ]);
-  return { twse, tpex };
+  const value = { twse, tpex };
+  listedCodesMemo = { until: Date.now() + (twse && tpex ? LISTED_CODES_MEMO_MS : LISTED_CODES_FAIL_MEMO_MS), value };
+  return value;
 }
 
 // ─── FinMind Technical Indicators (Daily Volume / KD / MACD) ───────────────
@@ -390,21 +429,14 @@ const datesResult = await env.DB.prepare(`SELECT DISTINCT date FROM holder_distr
           const r = row as { stock_code: string; close: number; change: number; change_pct: number };
           if (r.close > 0 && !priceMap.has(r.stock_code)) priceMap.set(r.stock_code, { close: r.close, change: r.change, change_pct: r.change_pct });
         }
-        // Step 2: Fetch TPEX prices live from Yahoo Finance v8 for stocks not in D1
-        const tpexCodes = topResult
-          .filter((r: { market?: string; stock_code: string }) => r.market === 'tpex' && !priceMap.has(r.stock_code))
-          .map((r: { stock_code: string }) => r.stock_code);
-        if (tpexCodes.length > 0) {
-          const tpexPrices = await fetchTpexPrices(tpexCodes);
-          for (const [k, v] of tpexPrices) priceMap.set(k, v);
-        }
+        // 上市與上櫃股價皆由每日排程寫入 stock_prices，這裡不再即時對外抓取。
       } catch (e) { console.error("price fetch error:", e); }
     }
     const finalData = topResult.map(r => ({ ...r, price: priceMap.get(r.stock_code) || null })); timings.price = Date.now() - t0;
     const responseData = { meta: { market, limit, sort, weeks: weekDates.length, week_dates: weekDates, count: finalData.length, generated_at: new Date().toISOString() }, data: finalData, ...(debug ? { _debug: { ...timings, total: Date.now() - t0, cacheEnabled: !!env.CACHE } } : {}) };
     const responseText = JSON.stringify(responseData);
-    if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 1800 });
-    return new Response(responseText, { headers: CORS_HEADERS });
+    if (env.CACHE && !debug) await env.CACHE.put(cacheKey, responseText, { expirationTtl: HOLDER_CACHE_TTL });
+    return new Response(responseText, { headers: { ...CORS_HEADERS, "X-Cache": "MISS" } });
   } catch (err) {
     console.error("handleBigHolderChanges error:", err);
     return errorResponse("Database query failed", 500);
@@ -580,7 +612,7 @@ async function handleTopChanges(request: Request, env: Env): Promise<Response> {
     const topData = changes.slice(0, limit);
     const responseData = { meta: { type, market, limit, count: topData.length }, data: topData };
     const responseText = JSON.stringify(responseData);
-    if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: 3600 });
+    if (env.CACHE) await env.CACHE.put(cacheKey, responseText, { expirationTtl: HOLDER_CACHE_TTL });
     return new Response(responseText, { headers: CORS_HEADERS });
   } catch (err) { return errorResponse("Database query failed", 500); }
 }
@@ -747,11 +779,7 @@ async function handleTdccCsv(lines: string[], firstCells: string[], dateParam: s
       inserted += ok; errors += stmts.length - ok;
     } catch(e) { if (!firstError) firstError = e instanceof Error ? e.message : String(e); errors += stmts.length; }
   }
-  if (env.CACHE) {
-    await env.CACHE.delete(`bigholderchanges:v3:twse:5000:total_change:6:p::`);
-    await env.CACHE.delete(`bigholderchanges:v3:tpex:5000:total_change:6:p::`);
-    await env.CACHE.delete(`bigholderchanges:v3:all:5000:total_change:6:p::`);
-  }
+  try { await invalidateHolderCaches(env); } catch (e) { console.error("cache clear error:", e); }
   return jsonResponse({ success: inserted > 0, source: "tdcc", message: `TDCC：匯入 ${inserted} 筆，略過 ${skipped} 筆，失敗 ${errors} 筆`, date: isoDate, total_rows: dataRows.length, inserted, skipped, errors, ...(firstError ? { first_error: firstError } : {}) });
 }
 
@@ -807,7 +835,7 @@ async function handleStockDetail(request: Request, env: Env, stockCode: string):
         // Fall back to live TWSE API (for TWSE stocks not yet in D1)
         const twsePrices = await fetchTwsePrices();
         price = twsePrices.get(code) || null;
-        // If still not found and looks like TPEX code range, try Yahoo Finance
+        // If still not found and looks like TPEX code range, try TPEX OpenAPI
         if (!price && /^[456789]/.test(code)) {
           const tpexPrices = await fetchTpexPrices([code]);
           price = tpexPrices.get(code) || null;
@@ -963,13 +991,8 @@ async function handleUpsertStock(request: Request, env: Env): Promise<Response> 
     if (env.CACHE) {
       await env.CACHE.delete(`dist:${code}`);
       await env.CACHE.delete(`stockdetail:v1:${code}`);
-      // Also clear big-holder-changes caches
-      for (const market of ['twse','tpex','all']) {
-        for (const sfx of ['6','12']) {
-          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:total_change:${sfx}:p::`);
-          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:total_change:${sfx}:np::`);
-        }
-      }
+      // Also clear big-holder-changes / top-changes caches
+      await invalidateHolderCaches(env);
     }
     return jsonResponse({ success: true, stock_code: code, total_stmts: total, inserted, errors: total - inserted });
   } catch (err) {
@@ -1013,12 +1036,7 @@ async function handleFixDates(request: Request, env: Env): Promise<Response> {
     
     if (env.CACHE) {
       await env.CACHE.delete('allstocks:v1');
-      for (const market of ['twse','tpex','all']) {
-        for (const sfx of ['6','12']) {
-          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:total_change:${sfx}:p::`);
-          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:total_change:${sfx}:np::`);
-        }
-      }
+      await invalidateHolderCaches(env);
     }
     return jsonResponse({ success: true, bad_dates: badDateList, fixed, deleted, errors });
   } catch (err) {
@@ -1093,20 +1111,8 @@ async function handleSupplementNorway(request: Request, env: Env): Promise<Respo
     }
     
     if (env.CACHE) {
-      for (const market of ['twse','tpex','all']) {
-        for (const sfx of ['6','12']) {
-          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:total_change:${sfx}:p::`);
-          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:total_change:${sfx}:np::`);
-          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:latest_change:${sfx}:p::`);
-          await env.CACHE.delete(`bigholderchanges:v3:${market}:5000:latest_change:${sfx}:np::`);
-        }
-      }
+      await invalidateHolderCaches(env);
       await env.CACHE.delete('allstocks:v1');
-      for (const t of ['increase','decrease']) {
-        for (const m of ['twse','tpex','all']) {
-          await env.CACHE.delete(`topchanges:v3:${t}:${m}:50`);
-        }
-      }
     }
     
     return jsonResponse({ 
@@ -1225,12 +1231,8 @@ async function handleFetchAndSavePrices(env: Env): Promise<{ success: boolean; m
     console.log('Final trade date:', tradeDate, 'Today TW:', todayTW);
 
         // ── Step 2: Fetch prices from TWSE + TPEX ────────────────────────────────
-    // Get tpex stock codes for Yahoo Finance fetch
-    const tpexCodesResult = await env.DB.prepare(
-      "SELECT DISTINCT stock_code FROM stock_info WHERE market = 'tpex' LIMIT 500"
-    ).all();
-    const allTpexCodes = (tpexCodesResult.results || []).map((r: { stock_code: string }) => r.stock_code);
-    const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices(allTpexCodes)]);
+    // 上市：TWSE OpenAPI；上櫃：櫃買 OpenAPI（各一個請求取得全市場）
+    const [twsePrices, tpexPrices] = await Promise.all([fetchTwsePrices(), fetchTpexPrices()]);
     const allPrices = new Map<string, PriceInfo>();
     for (const [k, v] of twsePrices) allPrices.set(k, v);
     for (const [k, v] of tpexPrices) allPrices.set(k, v);
@@ -1302,6 +1304,8 @@ if (allPrices.size === 0) return { success: false, message: 'No price data fetch
     if (env.CACHE) {
       await env.CACHE.delete('prices:latest');
       await env.CACHE.delete('prices:date');
+      // big-holder-changes 回應內含股價，股價更新後一併清除（排程稍後會預熱）
+      try { await invalidateHolderCaches(env); } catch (e) { console.error("cache clear error:", e); }
     }
     console.log(`Prices saved: ${saved} stocks for ${tradeDate}`);
     return { success: true, message: `Saved ${saved} prices for ${tradeDate}`, trade_date: tradeDate, saved };
@@ -1352,7 +1356,7 @@ async function handleGetPrices(request: Request, env: Env): Promise<Response> {
     const responseData = { trade_date: tradeDate, count: Object.keys(priceMap).length, data: priceMap };
     const text = JSON.stringify(responseData);
     if (!codesParam && !dateParam && env.CACHE) {
-      await env.CACHE.put(cacheKey, text, { expirationTtl: 3600 });
+      await env.CACHE.put(cacheKey, text, { expirationTtl: PRICES_CACHE_TTL });
     }
     return new Response(text, { headers: CORS_HEADERS });
   } catch (err) {
@@ -1404,8 +1408,7 @@ async function handleFetchFinMindDistribution(request: Request, env: Env): Promi
     }
     if (env.CACHE) {
             try {
-                      const bhcList = await env.CACHE.list({ prefix: "bigholderchanges:v3:" });
-                      for (const k of bhcList.keys) await env.CACHE.delete(k.name);
+                      await invalidateHolderCaches(env);
                       const distList = await env.CACHE.list({ prefix: "dist:" });
                       for (const k of distList.keys) await env.CACHE.delete(k.name);
             } catch (e) { console.error("cache clear error:", e); }
@@ -1419,6 +1422,39 @@ async function handleRefreshPrices(request: Request, env: Env): Promise<Response
   if (request.method !== 'POST') return errorResponse('Method Not Allowed', 405);
   const result = await handleFetchAndSavePrices(env);
   return jsonResponse(result);
+}
+
+const SATURDAY_PREWARM_CRON = "30 9 * * 6"; // 台灣時間週六 17:30（TDCC 爬蟲 16:00 之後）
+
+// ─── Cache Prewarm ───────────────────────────────────────────────────────────
+// 依前端實際使用的參數組合預先計算並寫入 KV，讓使用者不會碰到冷啟動。
+const PREWARM_QUERIES: string[] = [
+  "/api/big-holder-changes?market={m}&limit=5000&sort=total_change&weeks=12&include_price=1", // 起漲潛力
+  "/api/big-holder-changes?market={m}&limit=5000&sort=latest_change&weeks=6&include_price=1", // 本週異動
+  "/api/big-holder-changes?market={m}&limit=50&sort=total_change&weeks=12&include_price=1",   // 12週熱力圖
+  "/api/big-holder-changes?market={m}&limit=5000&sort=total_change&weeks=6&include_price=1",  // 持股背離 / SkillDashboard
+  "/api/big-holder-changes?market={m}&limit=5000&sort=total_change&weeks=6",                  // MarketTabs
+];
+
+async function prewarmCaches(env: Env): Promise<{ warmed: number; failed: number; ms: number }> {
+  const t0 = Date.now();
+  let warmed = 0, failed = 0;
+  const run = async (path: string, handler: (req: Request, env: Env) => Promise<Response>) => {
+    try {
+      const res = await handler(new Request("https://prewarm.internal" + path), env);
+      await res.arrayBuffer();
+      if (res.ok) warmed++; else failed++;
+    } catch (e) { failed++; console.error("prewarm error:", path, e); }
+  };
+  // 依序執行，避免同時對 D1 發出大量彙總查詢
+  for (const m of ["twse", "tpex"]) {
+    for (const q of PREWARM_QUERIES) await run(q.replace("{m}", m), handleBigHolderChanges);
+  }
+  await run("/api/big-holder-changes?market=twse&limit=1&weeks=1", handleBigHolderChanges); // Header
+  await run("/api/prices", handleGetPrices);
+  const ms = Date.now() - t0;
+  console.log(`prewarm: ${warmed} ok, ${failed} failed, ${ms}ms`);
+  return { warmed, failed, ms };
 }
 
 // ─── Main Router ─────────────────────────────────────────────────────────────
@@ -1476,7 +1512,12 @@ export default {
     return errorResponse("Not found", 404);
   },
 
-  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
-    await handleFetchAndSavePrices(env);
+  async scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
+    // 週六（TDCC 週資料上傳後）只預熱；平日晚間先更新股價與代碼表再預熱
+    if (event.cron !== SATURDAY_PREWARM_CRON) {
+      await handleFetchAndSavePrices(env);
+      await getListedCodesSet(env, { refresh: true });
+    }
+    await prewarmCaches(env);
   }
 ,};
