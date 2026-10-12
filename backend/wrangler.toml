@@ -20,9 +20,12 @@ ENVIRONMENT = "production"
 [build]
 command = "npm run build"
 
-# Cron Triggers: 台灣時間 19:00 = UTC 11:00, 台灣時間 20:00 = UTC 12:00 (Mon-Fri)
+# Cron Triggers（UTC）:
+#   平日 台灣 19:00 / 20:00：更新股價 + ISIN 代碼表，並預熱快取
+#   週六 台灣 17:30：TDCC 週資料（16:00 爬蟲）上傳後預熱快取
+#   ※ "30 9 * * 6" 需與 src/index.ts 的 SATURDAY_PREWARM_CRON 一致
 [triggers]
-crons = ["0 11 * * 1-5", "0 12 * * 1-5"]
+crons = ["0 11 * * 1-5", "0 12 * * 1-5", "30 9 * * 6"]
 
 # Secrets (set via: wrangler secret put FINMIND_TOKEN)
 # FINMIND_TOKEN - FinMind API token for price & industry data
