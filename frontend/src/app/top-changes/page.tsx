@@ -224,7 +224,7 @@ function HolderPriceTable({ rows, weekDates, priceMap, priceDate, emptyMessage }
             return (
               <tr key={row.stock_code} className="hover:bg-slate-50 transition-colors">
                 <td className="px-3 py-2 text-slate-400 text-xs">{idx + 1}</td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2 whitespace-nowrap">
                   <Link href={`/stock/${row.stock_code}`} className="group">
                     <span className="font-semibold text-slate-800 group-hover:text-primary-600">{row.stock_code}</span>
                     {row.stock_name && <span className="ml-1.5 text-slate-500 text-xs">{row.stock_name}</span>}
@@ -481,7 +481,7 @@ function ScreenerWithSave({ market }: { market: Market }) {
               return (
                 <tr key={row.stock_code} className="hover:bg-slate-50 transition-colors">
                   <td className="px-3 py-2 text-slate-400 text-xs">{idx + 1}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2 whitespace-nowrap">
                     <Link href={`/stock/${row.stock_code}`} className="group">
                       <span className="font-semibold text-slate-800 group-hover:text-primary-600">{row.stock_code}</span>
                       {row.stock_name && <span className="ml-1.5 text-slate-500 text-xs">{row.stock_name}</span>}
@@ -805,7 +805,7 @@ function HistoryPanel() {
                 {rows.map((row, idx) => (
                   <tr key={row.id} className="hover:bg-slate-50">
                     <td className="px-3 py-2 text-slate-400">{idx + 1}</td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 whitespace-nowrap">
                       <Link href={`/stock/${row.stock_code}`} className="hover:text-primary-600">
                         <span className="font-semibold text-slate-800">{row.stock_code}</span>
                         {row.stock_name && <span className="ml-1.5 text-slate-500">{row.stock_name}</span>}

@@ -13,6 +13,7 @@ import {
   Legend,
   Cell,
 } from 'recharts'
+import { useChartColors } from '@/lib/theme'
 
 interface TechnicalPoint {
   date: string
@@ -36,6 +37,8 @@ function formatDate(d: string): string {
 }
 
 export function TechnicalCharts({ series }: Props) {
+  const cc = useChartColors()
+  const tip = { contentStyle: { background: cc.tooltipBg, borderColor: cc.tooltipBorder, color: cc.tooltipText, borderRadius: 6 }, labelStyle: { color: cc.tooltipText } }
   if (!series || series.length === 0) return null
 
   const chartData = [...series]
@@ -58,14 +61,14 @@ export function TechnicalCharts({ series }: Props) {
         <h3 className="text-sm font-medium text-slate-600 mb-2">日成交量（股）</h3>
         <ResponsiveContainer width="100%" height={160}>
           <BarChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+            <CartesianGrid strokeDasharray="3 3" stroke={cc.grid} />
+            <XAxis dataKey="date" tick={{ fontSize: 11, fill: cc.axis }} stroke={cc.grid} />
             <YAxis
-              tick={{ fontSize: 11 }}
+              tick={{ fontSize: 11, fill: cc.axis }} stroke={cc.grid}
               tickFormatter={(v: number) => (v >= 10000 ? `${(v / 10000).toFixed(0)}萬` : String(v))}
             />
-            <Tooltip formatter={(v: number) => v.toLocaleString()} />
-            <Bar dataKey="成交量" fill="#94a3b8" />
+            <Tooltip {...tip} formatter={(v: number) => v.toLocaleString()} />
+            <Bar dataKey="成交量" fill={cc.volume} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -74,13 +77,13 @@ export function TechnicalCharts({ series }: Props) {
         <h3 className="text-sm font-medium text-slate-600 mb-2">K值 / D值</h3>
         <ResponsiveContainer width="100%" height={180}>
           <LineChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} />
-            <Tooltip />
+            <CartesianGrid strokeDasharray="3 3" stroke={cc.grid} />
+            <XAxis dataKey="date" tick={{ fontSize: 11, fill: cc.axis }} stroke={cc.grid} />
+            <YAxis tick={{ fontSize: 11, fill: cc.axis }} stroke={cc.grid} domain={[0, 100]} />
+            <Tooltip {...tip} />
             <Legend />
-            <Line type="monotone" dataKey="K" stroke="#3b82f6" strokeWidth={2} dot={false} />
-            <Line type="monotone" dataKey="D" stroke="#f59e0b" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="K" stroke={cc.blue} strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="D" stroke={cc.amber} strokeWidth={2} dot={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -89,18 +92,18 @@ export function TechnicalCharts({ series }: Props) {
         <h3 className="text-sm font-medium text-slate-600 mb-2">MACD（DIF / MACD / 柱狀圖）</h3>
         <ResponsiveContainer width="100%" height={200}>
           <ComposedChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip />
+            <CartesianGrid strokeDasharray="3 3" stroke={cc.grid} />
+            <XAxis dataKey="date" tick={{ fontSize: 11, fill: cc.axis }} stroke={cc.grid} />
+            <YAxis tick={{ fontSize: 11, fill: cc.axis }} stroke={cc.grid} />
+            <Tooltip {...tip} />
             <Legend />
             <Bar dataKey="柱狀圖">
               {chartData.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={entry.柱狀圖 >= 0 ? '#ef4444' : '#22c55e'} />
+                <Cell key={`cell-${index}`} fill={entry.柱狀圖 >= 0 ? cc.up : cc.down} />
               ))}
             </Bar>
-            <Line type="monotone" dataKey="DIF" stroke="#3b82f6" strokeWidth={2} dot={false} />
-            <Line type="monotone" dataKey="MACD" stroke="#f59e0b" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="DIF" stroke={cc.blue} strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="MACD" stroke={cc.amber} strokeWidth={2} dot={false} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>

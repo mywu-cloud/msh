@@ -11,6 +11,7 @@ import {
   LineChart,
   Line,
 } from 'recharts'
+import { useChartColors } from '@/lib/theme'
 
 interface BracketRow {
   date: string
@@ -91,6 +92,8 @@ function computeZoomDomain(values: number[], paddingRatio = 0.2, minFloor = 0): 
 }
 
 export function HolderHeatmap({ data, stockCode, stockName }: Props) {
+  const cc = useChartColors()
+  const tip = { contentStyle: { background: cc.tooltipBg, borderColor: cc.tooltipBorder, color: cc.tooltipText, borderRadius: 6 }, labelStyle: { color: cc.tooltipText } }
   if (!data || data.length === 0) {
     return (
       <div className="flex items-center justify-center h-48 text-slate-400 text-sm">
@@ -138,14 +141,14 @@ export function HolderHeatmap({ data, stockCode, stockName }: Props) {
         <h3 className="text-sm font-medium text-slate-600 mb-2">持股比例分布趨勢</h3>
         <ResponsiveContainer width="100%" height={240}>
           <AreaChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} unit="%" domain={stackedRatioDomain} allowDecimals={true} allowDataOverflow={true} />
-            <Tooltip formatter={(v: number) => v.toFixed(2) + '%'} />
+            <CartesianGrid strokeDasharray="3 3" stroke={cc.grid} />
+            <XAxis dataKey="date" tick={{ fontSize: 11, fill: cc.axis }} stroke={cc.grid} />
+            <YAxis tick={{ fontSize: 11, fill: cc.axis }} stroke={cc.grid} unit="%" domain={stackedRatioDomain} allowDecimals={true} allowDataOverflow={true} />
+            <Tooltip {...tip} formatter={(v: number) => v.toFixed(2) + '%'} />
             <Legend />
-            <Area type="monotone" dataKey="大股東" stackId="1" stroke="#ef4444" fill="#fecaca" />
-            <Area type="monotone" dataKey="中股東" stackId="1" stroke="#f59e0b" fill="#fde68a" />
-            <Area type="monotone" dataKey="小股東" stackId="1" stroke="#22c55e" fill="#bbf7d0" />
+            <Area type="monotone" dataKey="大股東" stackId="1" stroke={cc.up} fill={cc.upFill} />
+            <Area type="monotone" dataKey="中股東" stackId="1" stroke={cc.amber} fill={cc.amberFill} />
+            <Area type="monotone" dataKey="小股東" stackId="1" stroke={cc.down} fill={cc.downFill} />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -153,11 +156,11 @@ export function HolderHeatmap({ data, stockCode, stockName }: Props) {
         <h3 className="text-sm font-medium text-slate-600 mb-2">大股東持有比率趨勢（局部放大）</h3>
         <ResponsiveContainer width="100%" height={200}>
           <LineChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} unit="%" domain={bigRatioDomain} allowDecimals={true} />
-            <Tooltip formatter={(v: number) => v.toFixed(2) + '%'} />
-            <Line type="monotone" dataKey="大股東" name="大股東%" stroke="#ef4444" strokeWidth={2} dot={{ r: 3, fill: '#ef4444' }} activeDot={{ r: 5 }} />
+            <CartesianGrid strokeDasharray="3 3" stroke={cc.grid} />
+            <XAxis dataKey="date" tick={{ fontSize: 11, fill: cc.axis }} stroke={cc.grid} />
+            <YAxis tick={{ fontSize: 11, fill: cc.axis }} stroke={cc.grid} unit="%" domain={bigRatioDomain} allowDecimals={true} />
+            <Tooltip {...tip} formatter={(v: number) => v.toFixed(2) + '%'} />
+            <Line type="monotone" dataKey="大股東" name="大股東%" stroke={cc.up} strokeWidth={2} dot={{ r: 3, fill: cc.up }} activeDot={{ r: 5 }} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -165,11 +168,11 @@ export function HolderHeatmap({ data, stockCode, stockName }: Props) {
         <h3 className="text-sm font-medium text-slate-600 mb-2">股東人數趨勢（局部放大）</h3>
         <ResponsiveContainer width="100%" height={200}>
           <LineChart data={totalHoldersData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} domain={holderCountDomain} allowDecimals={false} />
-            <Tooltip />
-            <Line type="monotone" dataKey="總股東人數" stroke="#3b82f6" strokeWidth={2} dot={{ r: 3, fill: '#3b82f6' }} activeDot={{ r: 5 }} />
+            <CartesianGrid strokeDasharray="3 3" stroke={cc.grid} />
+            <XAxis dataKey="date" tick={{ fontSize: 11, fill: cc.axis }} stroke={cc.grid} />
+            <YAxis tick={{ fontSize: 11, fill: cc.axis }} stroke={cc.grid} domain={holderCountDomain} allowDecimals={false} />
+            <Tooltip {...tip} />
+            <Line type="monotone" dataKey="總股東人數" stroke={cc.blue} strokeWidth={2} dot={{ r: 3, fill: cc.blue }} activeDot={{ r: 5 }} />
           </LineChart>
         </ResponsiveContainer>
       </div>

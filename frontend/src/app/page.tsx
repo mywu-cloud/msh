@@ -26,7 +26,7 @@ function IndustrySelect({ market, value, onChange }: {
     <select
       value={value}
       onChange={e => onChange(e.target.value)}
-      className="text-sm border border-slate-200 rounded px-2 py-1.5 text-slate-600 bg-white hover:border-slate-300 focus:outline-none focus:border-primary-400"
+      className="flex-1 min-w-0 sm:flex-none max-w-full text-sm border border-slate-200 rounded px-2 py-1.5 text-slate-600 bg-white hover:border-slate-300 focus:outline-none focus:border-primary-400"
     >
       <option value="">{market === 'twse' ? '全部上市產業' : '全部上櫃產業'}</option>
       {industries.map(ind => <option key={ind} value={ind}>{ind}</option>)}
@@ -52,7 +52,7 @@ function ConceptSelect({ market, value, onChange }: {
     <select
       value={value}
       onChange={e => onChange(e.target.value)}
-      className="text-sm border border-slate-200 rounded px-2 py-1.5 text-slate-600 bg-white hover:border-slate-300 focus:outline-none focus:border-primary-400"
+      className="flex-1 min-w-0 sm:flex-none max-w-full text-sm border border-slate-200 rounded px-2 py-1.5 text-slate-600 bg-white hover:border-slate-300 focus:outline-none focus:border-primary-400"
     >
       <option value="">全部概念股</option>
       {concepts.map(c => <option key={c} value={c}>{c}</option>)}
@@ -77,32 +77,32 @@ export default function HomePage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">大股東持有比率週增減排行</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900">大股東持有比率週增減排行</h1>
           <p className="text-sm text-slate-600 mt-1">大股東持有比率週增減排行，按累計增幅由高至低排序</p>
         </div>
         <SearchBar value={searchQuery} onChange={setSearchQuery} placeholder="搜尋股票代號或名稱..." />
       </div>
 
       <div className="card p-0">
-        <div className="flex border-b border-surface-border">
+        <div className="flex flex-wrap items-stretch border-b border-surface-border">
           {TABS.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={[
-                'flex items-center gap-1.5 px-5 py-3 text-sm font-medium transition-colors border-b-2 -mb-px',
+                'flex flex-1 sm:flex-none justify-center sm:justify-start items-center gap-1.5 px-4 sm:px-5 py-3 text-sm font-medium whitespace-nowrap transition-colors border-b-2 -mb-px',
                 activeTab === tab.id
                   ? 'border-primary-500 text-primary-700 bg-primary-50'
                   : 'border-transparent text-slate-600 hover:text-slate-800 hover:bg-slate-50',
               ].join(' ')}
             >
               <span className="font-semibold">{tab.label}</span>
-              <span className={['text-xs', activeTab === tab.id ? 'text-primary-500' : 'text-slate-500'].join(' ')}>{tab.sub}</span>
+              <span className={['text-xs hidden sm:inline', activeTab === tab.id ? 'text-primary-500' : 'text-slate-500'].join(' ')}>{tab.sub}</span>
             </button>
           ))}
-          <div className="ml-auto flex items-center gap-3 px-4">
+          <div className="w-full lg:w-auto lg:ml-auto flex flex-wrap items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 lg:py-0 border-t lg:border-t-0 border-surface-border">
             {activeTab === 'twse' && (
               <IndustrySelect market="twse" value={twseIndustry} onChange={setTwseIndustry} />
             )}
@@ -115,7 +115,7 @@ export default function HomePage() {
             {activeTab === 'tpex' && (
               <ConceptSelect market="tpex" value={tpexConcept} onChange={setTpexConcept} />
             )}
-            <span className="text-sm text-slate-500">集保所 TDCC</span>
+            <span className="hidden sm:inline text-sm text-slate-500 whitespace-nowrap">集保所 TDCC</span>
           </div>
         </div>
 

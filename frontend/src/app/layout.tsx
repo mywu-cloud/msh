@@ -1,7 +1,17 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { Header } from '@/components/Header'
 import { Footer } from '@/components/Footer'
+import { themeInitScript } from '@/lib/theme-script'
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#0b111d' },
+  ],
+}
 
 export const metadata: Metadata = {
   title: 'MSH 股權分散表大股東籌碼分析',
@@ -21,15 +31,15 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="zh-TW">
+    <html lang="zh-TW" suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <link rel="icon" href="/favicon.ico" />
       </head>
       <body className="bg-surface-bg min-h-screen flex flex-col">
         <Header />
-        <main className="flex-1 mx-auto w-full px-4 py-6 max-w-[1300px]">
+        <main className="flex-1 mx-auto w-full px-3 sm:px-4 py-4 sm:py-6 max-w-[1300px]">
           {children}
         </main>
         <Footer />

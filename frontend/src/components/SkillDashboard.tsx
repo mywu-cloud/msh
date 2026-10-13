@@ -139,13 +139,13 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
 
   return (
     <div className="overflow-x-auto">
-      <table className="text-sm" style={{minWidth:'1180px', tableLayout:'auto'}}>
+      <table className="text-sm w-full lg:min-w-[1180px]" style={{tableLayout:'auto'}}>
         <thead>
           <tr className="bg-slate-50 border-b border-slate-200">
-            <th className="text-left px-3 py-2 text-slate-700 font-medium w-8 cursor-pointer hover:text-primary-600 select-none" onClick={() => onSort('rank')}>
+            <th className="sticky-col left-0 text-left px-2 sm:px-3 py-2 text-slate-700 font-medium w-10 min-w-[40px] cursor-pointer hover:text-primary-600 select-none" onClick={() => onSort('rank')}>
               # <SortIcon col="rank" sortKey={sortKey} sortDir={sortDir} />
             </th>
-            <th className="text-left px-3 py-2 text-slate-700 font-medium cursor-pointer hover:text-primary-600 select-none" onClick={() => onSort('stock_code')}>
+            <th className="sticky-col left-10 text-left px-2 sm:px-3 py-2 text-slate-700 font-medium whitespace-nowrap cursor-pointer hover:text-primary-600 select-none shadow-[1px_0_0_rgb(var(--c-border))] lg:shadow-none" onClick={() => onSort('stock_code')}>
               股票代號/名稱 <SortIcon col="stock_code" sortKey={sortKey} sortDir={sortDir} />
             </th>
             <th className="text-left px-3 py-2 text-slate-700 font-medium hidden md:table-cell cursor-pointer hover:text-primary-600 select-none whitespace-nowrap" onClick={() => onSort('industry')}>
@@ -176,8 +176,8 @@ function StockTable({ rows, weekDates, startIndex, sortKey, sortDir, onSort, has
             const isTotalNeg = row.total_change < 0
             return (
               <tr key={row.stock_code} className="hover:bg-slate-50 transition-colors">
-                <td className="px-3 py-2 text-slate-600 text-xs text-center">{startIndex + idx + 1}</td>
-                <td className="px-3 py-2 whitespace-nowrap">
+                <td className="sticky-col left-0 w-10 min-w-[40px] px-2 sm:px-3 py-2 text-slate-600 text-xs text-center">{startIndex + idx + 1}</td>
+                <td className="sticky-col left-10 px-2 sm:px-3 py-2 whitespace-nowrap shadow-[1px_0_0_rgb(var(--c-border))] lg:shadow-none">
                   <Link href={`/stock/${row.stock_code}`} className="flex items-center gap-2 group">
                     <div>
                       <span className="font-semibold text-primary-600">{row.stock_code}</span>
@@ -301,7 +301,7 @@ export function SkillDashboard({ market, searchQuery, industry = '', concept = '
   if (sortedRows.length === 0) return <div className="p-8 text-center text-slate-600"><p>找不到符合條件的股票</p></div>
 
   return (
-    <div className="overflow-x-auto" style={{minWidth:0}}>
+    <div style={{minWidth:0}}>
       {/* Download toolbar */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50">
         <span className="text-xs text-slate-700">共 {sortedRows.length} 檔</span>

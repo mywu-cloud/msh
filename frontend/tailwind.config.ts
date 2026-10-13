@@ -1,6 +1,7 @@
 import type { Config } from 'tailwindcss'
 
 const config: Config = {
+  darkMode: 'class',
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
@@ -46,10 +47,11 @@ const config: Config = {
           900: '#1e3a8a',
         },
         surface: {
-          DEFAULT: '#ffffff',
-          secondary: '#f8fafc',
-          tertiary:  '#f1f5f9',
-          border:    '#e2e8f0',
+          DEFAULT:   'rgb(var(--c-surface) / <alpha-value>)',
+          secondary: 'rgb(var(--c-surface-2) / <alpha-value>)',
+          tertiary:  'rgb(var(--c-surface-3) / <alpha-value>)',
+          border:    'rgb(var(--c-border) / <alpha-value>)',
+          bg:        'rgb(var(--c-bg) / <alpha-value>)',
         },
         alert: {
           DEFAULT: '#d97706',
@@ -58,16 +60,16 @@ const config: Config = {
         },
         // Override slate for better readability (min 13px text baseline)
         slate: {
-          50:  '#f8fafc',
-          100: '#f1f5f9',
-          200: '#e2e8f0',
-          300: '#94a3b8',
-          400: '#64748b',
-          500: '#475569',
-          600: '#334155',
-          700: '#1e293b',
-          800: '#0f172a',
-          900: '#0a0f1e',
+          50: 'rgb(var(--slate-50) / <alpha-value>)',
+          100: 'rgb(var(--slate-100) / <alpha-value>)',
+          200: 'rgb(var(--slate-200) / <alpha-value>)',
+          300: 'rgb(var(--slate-300) / <alpha-value>)',
+          400: 'rgb(var(--slate-400) / <alpha-value>)',
+          500: 'rgb(var(--slate-500) / <alpha-value>)',
+          600: 'rgb(var(--slate-600) / <alpha-value>)',
+          700: 'rgb(var(--slate-700) / <alpha-value>)',
+          800: 'rgb(var(--slate-800) / <alpha-value>)',
+          900: 'rgb(var(--slate-900) / <alpha-value>)',
         },
       },
       boxShadow: {
